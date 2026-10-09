@@ -3,6 +3,7 @@ const resolveOptions = require('../libs/utils/resolve-options');
 const { encrypt, decrypt } = require('../libs/utils/crypto');
 const createRevocation = require('../libs/resource/revocation');
 const { normalizeClaims } = require('../libs/resource/normalize-user');
+const { extractToken } = require('../libs/resource/authenticate');
 
 const base = { name: 'oidc', prefix: '/api/oidc', mountPath: '/oidc' };
 
@@ -78,6 +79,21 @@ describe('@kne/fastify-oidc 单元测试', () => {
       const client = normalizeClaims({ sub: 'svc', client_id: 'svc', [claims.clientToken]: true }, claims);
       expect(client.isClient).to.equal(true);
       expect(client.userId).to.equal(null);
+    });
+  });
+
+  describe('extractToken', () => {
+    it('should read token from authorization header', () => {
+      expect(extractToken({ headers: { authorization: 'Bearer abc' } })).to.deep.equal({ scheme: 'bearer', token: 'abc' });
+      expect(extractToken({ headers: { authorization: 'Basic abc' } })).to.equal(null);
+    });
+
+    it('should read token from query only for event-stream requests', () => {
+      const query = { Authorization: 'Bearer abc' };
+      expect(extractToken({ headers: {}, query })).to.equal(null);
+      expect(extractToken({ headers: { accept: 'text/event-stream' }, query })).to.include({ scheme: 'bearer', token: 'abc' });
+      expect(extractToken({ headers: { accept: 'text/event-stream' }, query: { authorization: 'DPoP abc', DPoP: 'proof' } })).to.include({ scheme: 'dpop', token: 'abc', proof: 'proof' });
+      expect(extractToken({ headers: { accept: 'text/event-stream', authorization: 'Bearer header' }, query })).to.deep.equal({ scheme: 'bearer', token: 'header' });
     });
   });
 });

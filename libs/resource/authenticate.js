@@ -4,18 +4,34 @@ const { createError } = require('../utils/intl');
 
 const { Unauthorized, Forbidden } = httpErrors;
 
-const extractToken = request => {
-  const header = request.headers.authorization;
-  if (!header) {
-    return null;
-  }
-  const index = header.indexOf(' ');
-  const scheme = header.slice(0, index).toLowerCase();
-  const token = header.slice(index + 1).trim();
+const parseAuthorization = value => {
+  const index = value.indexOf(' ');
+  const scheme = value.slice(0, index).toLowerCase();
+  const token = value.slice(index + 1).trim();
   if (!['bearer', 'dpop'].includes(scheme) || !token) {
     return null;
   }
   return { scheme, token };
+};
+
+const isEventStream = request => String(request.headers.accept || '').includes('text/event-stream');
+
+// 原生 EventSource 无法设置请求头，SSE 请求允许从 query 读取 Authorization / DPoP
+const extractToken = request => {
+  const header = request.headers.authorization;
+  if (header) {
+    return parseAuthorization(header);
+  }
+  if (!isEventStream(request)) {
+    return null;
+  }
+  const query = request.query || {};
+  const value = query.Authorization || query.authorization;
+  const extracted = typeof value === 'string' ? parseAuthorization(value) : null;
+  if (!extracted) {
+    return null;
+  }
+  return Object.assign(extracted, { proof: query.DPoP || query.dpop });
 };
 
 /**
@@ -53,7 +69,7 @@ module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, se
       }
       try {
         await dpop.verify({
-          proof: request.headers.dpop,
+          proof: extracted.proof || request.headers.dpop,
           method: request.method,
           url: getRequestUrl(request),
           accessToken: extracted.token,

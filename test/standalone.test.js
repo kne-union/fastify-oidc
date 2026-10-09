@@ -81,6 +81,12 @@ describe('@kne/fastify-oidc standalone 模式', function () {
       expect(client.allowed_resources).to.deep.equal([audience]);
       expect(await services.resourceServer.findByIdentifier(audience)).to.exist;
     });
+
+    it('should expose public login config without auth', async () => {
+      const res = await fetch(`${app.origin}/api/oidc/config`);
+      expect(res.status).to.equal(200);
+      expect(await res.json()).to.deep.equal({ mode: 'standalone', issuer, clientId, audience });
+    });
   });
 
   describe('授权码 + PKCE 登录', () => {

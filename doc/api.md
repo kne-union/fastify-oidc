@@ -89,6 +89,28 @@
 | end_session | `GET /oidc/session/end` | RP-Initiated Logout |
 | revocation / introspection | `POST /oidc/token/revocation`、`POST /oidc/token/introspection` | 撤销、内省 |
 
+#### 前端登录配置（standalone / central）
+
+##### GET /api/oidc/config
+
+免登录，供前端登录页判断是否支持 SSO 以及当前模式（如 components-admin 的 Account 登录页）。只返回公开信息：
+
+```json
+{
+  "mode": "central",
+  "issuer": "https://main.example.com/oidc",
+  "clientId": "child-spa",
+  "audience": "https://child.example.com/api"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| mode | `standalone` / `central` |
+| issuer | IdP issuer；central 为主项目 issuer |
+| clientId | 本项目前端使用的 client_id（`clientId` 配置，默认 `oidc-spa`） |
+| audience | 本项目资源服务标识 |
+
 #### 登录交互（standalone）
 
 前端交互页通过以下接口驱动流程，均依赖交互 cookie，需与 IdP 同源调用。成功时返回 `{ redirectTo }`，前端 `window.location` 跳转即可。

@@ -85,7 +85,7 @@ describe('@kne/fastify-oidc standalone 模式', function () {
     it('should expose public login config without auth', async () => {
       const res = await fetch(`${app.origin}/api/oidc/config`);
       expect(res.status).to.equal(200);
-      expect(await res.json()).to.deep.equal({ mode: 'standalone', issuer, clientId, audience });
+      expect(await res.json()).to.deep.equal({ mode: 'standalone', isMain: false, issuer, clientId, audience });
     });
   });
 
@@ -255,6 +255,9 @@ describe('@kne/fastify-oidc standalone 模式', function () {
       expect(confirm.status).to.equal(303);
       expect(confirm.headers.get('location')).to.equal(`${app.origin}/`);
       expect((await getJson(`${app.origin}/api/me`, tokens.access_token)).status).to.equal(401);
+
+      const { onInteraction } = await loginAs({ browser, credentials: { email: 'lisi@test.com', password: 'pwd-2' } });
+      expect(onInteraction.steps[0]).to.equal('login');
     });
 
     it('should revoke tokens on permission change and allow silent re-login', async () => {

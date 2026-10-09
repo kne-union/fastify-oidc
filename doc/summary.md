@@ -133,6 +133,7 @@ fastify.register(require('@kne/fastify-file-manager'), {
 |----------|------|------|
 | `ORIGIN` | 是 | 本项目对外访问的 origin，如 `https://a.example.com` |
 | `AUTH_MODE` | 否 | `standalone`（默认）/ `central` |
+| `OIDC_IS_MAIN` | 否 | `true` 表示主系统（子项目以本项目为 IdP），前端登录页据此不显示 SSO 入口 |
 | `OIDC_KEY_SECRET` | 是（standalone） | 加密签名私钥与 client_secret 的密钥，未配置时使用不安全的默认值并告警 |
 | `OIDC_COOKIE_SECRET` | 否 | 交互 cookie 签名密钥，默认由 `OIDC_KEY_SECRET` 派生 |
 
@@ -201,7 +202,7 @@ import { loadModule } from '@kne/remote-loader';
 import createAjax from '@kne/axios-fetch';
 
 export const globalInit = async () => {
-  const { createOidcClient } = await loadModule('components-admin:Oidc');
+  const { default: createOidcClient } = await loadModule('components-admin:Oidc@createOidcClient');
   const oidc = createOidcClient({
     issuer: window.runtimeOidcIssuer || `${window.location.origin}/oidc`,
     clientId: window.runtimeOidcClientId,

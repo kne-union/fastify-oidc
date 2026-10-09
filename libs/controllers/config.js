@@ -13,6 +13,7 @@ module.exports = fp(async (fastify, options) => {
     },
     async () => ({
       mode: options.mode,
+      isMain: options.mode === 'standalone' && !!options.isMain,
       issuer: runtime.issuer,
       clientId: runtime.clientId,
       audience: runtime.audience

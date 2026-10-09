@@ -48,7 +48,7 @@
 
 | 资源 | identifier | scope | 用途 |
 |------|------------|-------|------|
-| 本项目 API | `${ORIGIN}/api` | `api` | SPA 调用本项目接口 |
+| 本项目 API（名称为 `name`） | `${ORIGIN}/api` | `api` | SPA 调用本项目接口 |
 | 服务接口 | `${issuer origin}${prefix}` | `user:read tenant:read` | 子项目以 client_credentials 读取用户 / 租户 |
 
 client 只能申请 `allowedResources` 中的资源；子项目 token 的 `aud` 是子项目 API，拿到主项目会被拒绝。

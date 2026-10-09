@@ -45,7 +45,7 @@ module.exports = ({ fastify, options, translator }) => {
     const resourceServers = [...(options.resourceServers || [])];
     const clients = [...(options.clients || [])];
     if (options.seedSelf) {
-      resourceServers.push({ identifier: runtime.audience, name: `${options.name} API` });
+      resourceServers.push({ identifier: runtime.audience, name: options.name });
       resourceServers.push({ identifier: runtime.serviceAudience, name: 'OIDC 服务接口', scope: options.serviceScopes.join(' ') });
       clients.push(
         Object.assign(

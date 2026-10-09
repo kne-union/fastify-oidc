@@ -453,7 +453,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 | 方法 | 说明 |
 |------|------|
-| `authenticate.user` | 校验 `Authorization: Bearer / DPoP`，填充 `request.user` 与兼容字段；无 token 且 `legacyToken` 时回退 `x-user-token`；拒绝 client 令牌 |
+| `authenticate.user` | 校验 `Authorization: Bearer / DPoP`（SSE 请求即 `Accept: text/event-stream` 且无该头时，读 query 中的 `Authorization` / `DPoP`，供原生 EventSource 使用），填充 `request.user` 与兼容字段；无 token 且 `legacyToken` 时回退 `x-user-token`；拒绝 client 令牌 |
 | `authenticate.tenantUser` | 按 `tenantSource` 填充 `request.tenantUserInfo`；legacy 请求委托给 fastify-tenant |
 | `authenticate.admin` | 委托 fastify-account 的超级管理员校验 |
 | `authenticate.scope(...scopes)` | 返回中间件，校验 token scope |

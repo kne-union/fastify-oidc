@@ -1,6 +1,6 @@
 {
   "name": "@kne/fastify-oidc",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "基于 oidc-provider 的 Fastify OIDC 认证插件，支持 standalone / central 多项目单点登录、租户与跨项目令牌",
   "main": "index.js",
   "scripts": {

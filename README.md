@@ -1,6 +1,256 @@
-### 配置项
+# fastify-oidc
 
-#### 基础
+### 描述
+
+基于 oidc-provider 的 Fastify OIDC 认证插件，支持 standalone / central 多项目单点登录、租户与跨项目令牌
+
+### 关键词
+
+fastify, oidc, oauth2, sso, oidc-provider, authentication, jwt, pkce, dpop, token-exchange, multi-tenant, kne
+
+### 安装
+
+```shell
+npm i --save @kne/fastify-oidc
+```
+
+### 概述
+
+#### 项目概述
+
+`@kne/fastify-oidc` 基于 [oidc-provider](https://github.com/panva/node-oidc-provider) 为 kne 体系的 Fastify 项目提供 OIDC / OAuth 2.0 认证能力，解决多个业务项目之间的统一登录、租户上下文传递与跨项目调用问题。
+
+同一个插件按 `mode` 扮演两种角色：
+
+| 模式 | 角色 | 说明 |
+|------|------|------|
+| `standalone` | IdP + 资源服务 | 内嵌 OIDC Provider，账号来自 `@kne/fastify-account`，租户 / 角色 / 权限来自 `@kne/fastify-tenant`；单独部署的项目和"主项目"都用此模式 |
+| `central` | 资源服务 + Client | 不启动 IdP、不建 OIDC 表，用主项目的 JWKS 验签，用户在本地 fastify-account 中按 `sub` 建镜像 |
+
+> **关键设计**：业务代码只依赖 `fastify.oidc.authenticate.*` 填充的 `request.user`（以及兼容字段 `request.userInfo` / `request.authenticatePayload` / `request.tenantUserInfo`），从 standalone 切换到 central 只需改环境变量。
+
+#### 核心架构与流程
+
+```
+                         ┌──────────────────────── 主项目（standalone） ────────────────────────┐
+ 浏览器 SPA               │                                                                      │
+ (components-admin Oidc)  │  /oidc/*  oidc-provider（授权、token、jwks、end_session）              │
+   │ 1.授权请求(PKCE)  ──→ │     ↓ 需要交互                                                        │
+   │ 2.前端交互页 /oidc-interaction?uid=  ←── /api/oidc/interaction/{uid}（303）                  │
+   │ 3.登录/选租户/确认 ──→ │  /api/oidc/interaction/{uid}/login|tenant|confirm|abort             │
+   │                       │     ↓ identity.js（fastify-account.verifyCredentials / fastify-tenant）│
+   │ 4.code → token    ──→ │  JWT access_token（aud=资源、带租户 claims、sid）                      │
+   │ 5.Bearer/DPoP 调 API → │  authenticate.user → request.user                                    │
+   │                       └──────────────────────────────────────────────────────────────────────┘
+   │                                          ↑ JWKS / client_credentials / back-channel logout
+   │                       ┌──────────── 子项目（central） ────────────┐
+   └── 同一 IdP 会话 SSO ─→ │  authenticate.user（远程 JWKS 验签）       │
+                           │  user-mirror（按 sub 建本地用户镜像）       │
+                           │  /api/oidc/backchannel-logout（登出通知）  │
+                           └───────────────────────────────────────────┘
+```
+
+| 环节 | 实现 | 说明 |
+|------|------|------|
+| 协议端点 | `libs/idp/mount.js` | 把 `mountPath`（默认 `/oidc`）下的请求原样交给 oidc-provider |
+| 交互 | `libs/services/interaction.js` | 登录、选择租户、授权确认、取消，返回 `{ redirectTo }` 由前端跳转 |
+| 账号 / 租户桥接 | `libs/idp/identity.js` | 唯一依赖 fastify-account / fastify-tenant 的地方 |
+| 资源侧鉴权 | `libs/resource/*` | JWT 验签、DPoP、撤销列表、`request.user` 归一化、legacy token 回退 |
+| 管理 | `libs/controllers/admin.js` | client、资源服务、签名密钥、会话 |
+
+#### 核心概念详解
+
+##### 资源服务（Resource Server）与 audience
+
+每个需要 access_token 的 API 是一个资源服务，`identifier` 即 token 的 `aud`。默认自动注册：
+
+| 资源 | identifier | scope | 用途 |
+|------|------------|-------|------|
+| 本项目 API | `${ORIGIN}/api` | `api` | SPA 调用本项目接口 |
+| 服务接口 | `${issuer origin}${prefix}` | `user:read tenant:read` | 子项目以 client_credentials 读取用户 / 租户 |
+
+client 只能申请 `allowedResources` 中的资源；子项目 token 的 `aud` 是子项目 API，拿到主项目会被拒绝。
+
+##### 租户上下文
+
+登录后增加一个自定义交互步骤 `tenant`（位于 login 与 consent 之间），选定的租户按 IdP 会话保存：
+
+| 情况 | 行为 |
+|------|------|
+| 用户不属于任何租户 | 跳过，token 不带租户 claims |
+| 只属于一个租户 | 自动选中 |
+| 多个租户 | 前端展示租户列表 |
+| 授权请求带 `tenant_id` 且用户是成员 | 静默切换（可配合 `prompt=none`） |
+| 会话中的租户已不再有效（被移出、关闭） | 重新判断上面几种情况 |
+
+token 中的租户相关 claim 以命名空间为前缀（默认 `${ORIGIN}/`，central 模式为 issuer 的 origin）：`tenant_id`、`tenant_user_id`、`roles`、`permissions`（按资源服务 `includePermissions` 决定是否携带）。
+
+##### 令牌撤销
+
+JWT access_token 无法真正撤销，插件在资源侧维护一个撤销列表：
+
+| 触发 | 撤销方式 |
+|------|----------|
+| RP-Initiated Logout（standalone） | 会话中各 client 的 `sid` 加入撤销列表 |
+| Back-Channel Logout（central） | 子项目收到 logout_token 后撤销 `sid`（无 sid 时按 `sub`） |
+| 权限变化 `onPermissionChange` | 撤销该用户所有 grant / refresh token，并拒绝撤销时间之前签发的 token；IdP 会话保留，前端静默重新获取带新权限的 token |
+| 管理接口强制下线 | 同上，并结束 IdP 会话、发送 back-channel logout |
+
+> **注意**：撤销列表默认存内存，多实例部署时需通过 `revocationStore` 传入共享存储（见 API 文档）。central 子项目的撤销列表与主项目相互独立，权限变化只在主项目生效，子项目依赖较短的 access_token 有效期（默认 10 分钟）。
+
+#### 主要特性
+
+| 特性 | 说明 |
+|------|------|
+| 授权码 + PKCE | SPA 公共 client，`token_endpoint_auth_method: none` |
+| JWT access_token | RS256 签名，`typ: at+jwt`，按资源服务区分 `aud` |
+| Refresh Token 轮转 | 每次刷新签发新 refresh token，旧的立即失效 |
+| 多租户 | 交互式 / 自动 / 静默切换租户，租户信息写入 token |
+| SSO | 多个项目共用主项目 IdP 会话 |
+| RP-Initiated Logout / Back-Channel Logout | 登出时通知所有子项目 |
+| DPoP | 前端可选启用，token 与浏览器密钥绑定，资源侧校验 proof 与重放 |
+| Client Credentials | 服务间调用，token 带 `client_token` 标记，只能访问 `authenticate.client` 保护的接口 |
+| Token Exchange（RFC 8693） | 服务端代用户换取访问其它资源服务的 token，token 带 `act` |
+| 签名密钥轮换 | active / next / retired 三态，多实例定期检测并热加载 |
+| 兼容旧 token | `legacyToken` 开启时，无 `Authorization` 头回退到 fastify-account 的 `x-user-token` |
+| 国际化 | 注册 @kne/fastify-intl 后错误信息、协议错误描述、登出页按请求语言返回（内置 `zh-CN` / `en-US`） |
+
+#### 使用方法
+
+##### 主项目 / 独立项目（standalone）
+
+注册顺序：`fastify-sequelize` → `fastify-account` → `fastify-tenant` → `fastify-oidc`。
+
+```js
+// server 插件注册
+// 可选：注册后错误信息按请求语言（x-user-locale / accept-language）返回，否则固定返回中文
+fastify.register(require('@kne/fastify-intl'), { defaultLocale: 'zh-CN' });
+
+fastify.register(require('@kne/fastify-account'), {
+  // 让 fastify-account 自身的接口（如 getUserInfo）也接受 OIDC access_token
+  getUserAuthenticate: () => fastify.oidc.authenticate.user
+});
+
+fastify.register(require('@kne/fastify-tenant'), {
+  getUserAuthenticate: () => fastify.oidc.authenticate.user,
+  // 角色 / 成员 / 租户变化后撤销已签发的 token
+  onPermissionChange: payload => fastify.oidc.onPermissionChange(payload)
+});
+
+fastify.register(require('@kne/fastify-oidc'), {
+  // mode / origin / keyEncryptionSecret 默认读取环境变量，见下表
+});
+
+// 其它 kne 插件的 getAuthenticate 改用 fastify.oidc.authenticate
+fastify.register(require('@kne/fastify-file-manager'), {
+  getAuthenticate: () => [fastify.oidc.authenticate.user]
+});
+```
+
+| 环境变量 | 必填 | 说明 |
+|----------|------|------|
+| `ORIGIN` | 是 | 本项目对外访问的 origin，如 `https://a.example.com` |
+| `AUTH_MODE` | 否 | `standalone`（默认）/ `central` |
+| `OIDC_KEY_SECRET` | 是（standalone） | 加密签名私钥与 client_secret 的密钥，未配置时使用不安全的默认值并告警 |
+| `OIDC_COOKIE_SECRET` | 否 | 交互 cookie 签名密钥，默认由 `OIDC_KEY_SECRET` 派生 |
+
+`fastify.sequelize.sync()` 完成后 IdP 才会初始化（生成密钥、写入默认 client / 资源服务），此前访问 `/oidc/*` 返回 503；需要等待时可 `await fastify.oidc.whenReady()`。
+
+##### 子项目（central）
+
+```js
+fastify.register(require('@kne/fastify-account'), {
+  getUserAuthenticate: () => fastify.oidc.authenticate.user
+});
+fastify.register(require('@kne/fastify-oidc'), {
+  mode: 'central'
+});
+```
+
+| 环境变量 | 必填 | 说明 |
+|----------|------|------|
+| `AUTH_MODE` | 是 | `central` |
+| `ORIGIN` | 是 | 子项目 origin |
+| `OIDC_ISSUER` | 是 | 主项目 issuer，如 `https://a.example.com/oidc` |
+| `OIDC_CLIENT_ID` | 否 | 子项目 SPA 在主项目注册的 client_id，默认 `oidc-spa` |
+| `OIDC_SERVICE_CLIENT_ID` / `OIDC_SERVICE_CLIENT_SECRET` | 建议 | 子项目服务端 client，用于拉取用户资料（镜像）与远程租户信息 |
+
+在主项目管理后台（或 `clients` / `resourceServers` 选项）登记子项目：
+
+```js
+// 主项目 fastify-oidc 选项
+{
+  resourceServers: [{ identifier: 'https://b.example.com/api', name: 'B 项目 API' }],
+  clients: [
+    {
+      clientId: 'b-spa',
+      redirect_uris: ['https://b.example.com/oidc-callback'],
+      post_logout_redirect_uris: ['https://b.example.com/'],
+      backchannel_logout_uri: 'https://b.example.com/api/oidc/backchannel-logout',
+      backchannel_logout_session_required: true,
+      allowedResources: ['https://b.example.com/api']
+    },
+    {
+      clientId: 'b-service',
+      grant_types: ['client_credentials'],
+      response_types: [],
+      token_endpoint_auth_method: 'client_secret_basic',
+      allowedResources: ['https://a.example.com/api/oidc']
+    }
+  ]
+}
+```
+
+> **建议**：子项目 client 配置 `backchannel_logout_session_required: true`，登出通知会携带 `sid`，子项目只撤销该会话的 token；否则按用户撤销。
+
+##### 前端
+
+前端使用 components-admin 的 `Oidc` 模块（授权码 + PKCE，可选 DPoP），管理后台使用 `OidcAdmin` 模块。默认路径：
+
+| 路径 | 组件 | 说明 |
+|------|------|------|
+| `/oidc-interaction` | `components-admin:Oidc@Interaction` | 登录交互页（`interactionPage`），参数 `uid`；仅 IdP 项目需要 |
+| `/oidc-callback` | `components-admin:Oidc@Callback` | 授权回调页（`callbackPath`） |
+
+在 `preset.js` 中创建 client，并接入 ajax 拦截器与 preset：
+
+```js
+import { loadModule } from '@kne/remote-loader';
+import createAjax from '@kne/axios-fetch';
+
+export const globalInit = async () => {
+  const { createOidcClient } = await loadModule('components-admin:Oidc');
+  const oidc = createOidcClient({
+    issuer: window.runtimeOidcIssuer || `${window.location.origin}/oidc`,
+    clientId: window.runtimeOidcClientId,
+    resource: `${window.location.origin}/api`
+  });
+  const ajax = createAjax({
+    baseURL: baseApiUrl,
+    errorHandler: error => message.error(error),
+    registerInterceptors: interceptors => oidc.registerInterceptors(interceptors)
+  });
+  // ...fetchPreset / remoteLoaderPreset 同原有配置
+  return { ajax, oidc, apis: getApis() };
+};
+```
+
+需要登录的路由用 `components-admin:Oidc@OidcAuthenticate` 包裹（替代原 `X-User-Token` 登录跳转），原有的 `UserInfo` / `AfterUserLoginLayout` 可继续使用：请求已自动携带 `Authorization`，fastify-account 的 `authenticate.user` 通过 `getUserAuthenticate` 委托给 fastify-oidc 校验。租户切换使用 `components-admin:Oidc@TenantSwitch`，退出使用 `components-admin:Oidc@OidcLogout`。
+
+> **注意**：前端路由不能放在 issuer 路径（默认 `/oidc`）下，否则会被 oidc-provider 接管。`clientId`、`resource` 需与 `OIDC_CLIENT_ID`、`OIDC_AUDIENCE` 一致，`redirectUri` 需在 client 的 `redirect_uris` 中登记。
+
+##### 运行环境
+
+oidc-provider 9.x 为 ESM 包，本插件通过动态 `import()` 加载，要求 Node.js `>= 22.12`；在 oidc-provider 未列入支持范围的 Node 版本上启动时会输出 `Unsupported runtime` 警告，不影响运行。
+
+
+### 示例
+
+### API
+
+#### 配置项
+
+##### 基础
 
 | 属性名 | 类型 | 必填 | 默认值 | 说明 |
 |--------|------|------|--------|------|
@@ -18,7 +268,7 @@
 | tenantNamespace | string | 否 | `tenant` | fastify-tenant 命名空间，不存在时不启用租户 |
 | intlNamespace | string | 否 | `intl` | @kne/fastify-intl 命名空间，不存在时返回内置中文文案 |
 
-#### IdP（standalone）
+##### IdP（standalone）
 
 | 属性名 | 类型 | 必填 | 默认值 | 说明 |
 |--------|------|------|--------|------|
@@ -56,7 +306,7 @@
 
 `getAuthenticate` 默认：`*:manage` 返回 `[authenticate.user, authenticate.admin]`，其余返回 `[authenticate.user]`。
 
-#### 资源侧
+##### 资源侧
 
 | 属性名 | 类型 | 必填 | 默认值 | 说明 |
 |--------|------|------|--------|------|
@@ -73,9 +323,9 @@
 | jwksUri | string | 否 | `${issuer}/jwks` | central 模式远程 JWKS 地址 |
 | userMirrorTTL | number | 否 | `600` | central 模式用户镜像缓存时长（秒） |
 
-### 接口
+#### 接口
 
-#### OIDC 协议端点（standalone）
+##### OIDC 协议端点（standalone）
 
 挂载在 issuer 路径下（默认 `/oidc`），由 oidc-provider 提供，以 `GET {issuer}/.well-known/openid-configuration` 为准：
 
@@ -89,15 +339,15 @@
 | end_session | `GET /oidc/session/end` | RP-Initiated Logout |
 | revocation / introspection | `POST /oidc/token/revocation`、`POST /oidc/token/introspection` | 撤销、内省 |
 
-#### 登录交互（standalone）
+##### 登录交互（standalone）
 
 前端交互页通过以下接口驱动流程，均依赖交互 cookie，需与 IdP 同源调用。成功时返回 `{ redirectTo }`，前端 `window.location` 跳转即可。
 
-##### GET /api/oidc/interaction/{uid}
+###### GET /api/oidc/interaction/{uid}
 
 oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={uid}`。
 
-##### GET /api/oidc/interaction/{uid}/details
+###### GET /api/oidc/interaction/{uid}/details
 
 获取当前步骤：
 
@@ -114,7 +364,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 `prompt.name` 为 `login` / `tenant` / `consent`；已登录时 `user` 为 `{ id, nickname, avatar, email, phone }`；`tenant` 步骤时 `tenants` 为 `{ list: [{ tenantId, tenantUserId, name, logo, companyName }], defaultTenantId }`。
 
-##### POST /api/oidc/interaction/{uid}/login
+###### POST /api/oidc/interaction/{uid}/login
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
@@ -125,19 +375,19 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 账号密码错误返回 400；账号状态不是 0 / 1 时返回 `{ status }`（与 fastify-account 登录一致，由前端处理如重置密码）。
 
-##### POST /api/oidc/interaction/{uid}/tenant
+###### POST /api/oidc/interaction/{uid}/tenant
 
 参数 `tenantId`（必填）。只能选择当前用户所属且开启的租户。
 
-##### POST /api/oidc/interaction/{uid}/confirm
+###### POST /api/oidc/interaction/{uid}/confirm
 
 确认授权（`skip_consent: false` 的 client 才会出现 consent 步骤）。
 
-##### POST /api/oidc/interaction/{uid}/abort
+###### POST /api/oidc/interaction/{uid}/abort
 
 取消登录，client 回调收到 `error=access_denied`。
 
-#### 管理接口（standalone）
+##### 管理接口（standalone）
 
 列表 `GET`（`filter`、`perPage`、`currentPage`），写操作 `POST`，`save` / `set-status` / `remove` 返回 `{}`。
 
@@ -158,7 +408,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | `POST /api/oidc/admin/session/revoke` | `{ uid }` 结束会话并通知子项目 | `session:manage` |
 | `POST /api/oidc/admin/session/revoke-user` | `{ userId, logout = true }` 撤销用户全部令牌，`logout` 时同时强制下线；返回 `{ grants, sessions }` | `session:manage` |
 
-#### 服务接口（standalone，client_credentials）
+##### 服务接口（standalone，client_credentials）
 
 需 `aud` 为 `serviceAudience`、带 `client_token` 标记的 token。
 
@@ -167,13 +417,13 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | `GET /api/oidc/service/user?id=` | `user:read` | 用户资料 `{ id, nickname, avatar, email, phone, gender, birthday, description, status }` |
 | `GET /api/oidc/service/tenant-user?userId=&tenantId=` | `tenant:read` | 用户在租户内的身份、角色、权限（fastify-tenant `getTenantUserInfo` 结果） |
 
-#### Back-Channel Logout（central）
+##### Back-Channel Logout（central）
 
 `POST /api/oidc/backchannel-logout`，`application/x-www-form-urlencoded`，参数 `logout_token`。校验通过后撤销 `sid`（无 sid 时按 `sub`），返回 200。
 
-### 程序化 API
+#### 程序化 API
 
-#### fastify.oidc.authenticate
+##### fastify.oidc.authenticate
 
 | 方法 | 说明 |
 |------|------|
@@ -203,7 +453,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 兼容字段：`request.authenticatePayload = { id, tenantId }`，`request.userInfo` 为 fastify-account 用户（central 为镜像用户）。
 
-#### 其它
+##### 其它
 
 | 方法 | 说明 |
 |------|------|
@@ -219,11 +469,11 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | `fastify.oidc.revocation.revokeSession(sid)` / `revokeSubject(sub)` / `isRevoked(payload)` | 撤销列表 |
 | `fastify.oidc.idp.getProvider()` | oidc-provider 实例（standalone） |
 
-### 数据模型
+#### 数据模型
 
 以下表只在 standalone 模式创建。
 
-#### payload（`t_oidc_payload`）
+##### payload（`t_oidc_payload`）
 
 | 属性名 | 类型 | 说明 |
 |--------|------|------|
@@ -239,7 +489,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 唯一索引 `(model_name, payload_id)`；索引 `grant_id`、`uid`、`user_code`、`(account_id, model_name)`、`expires_at`。
 
-#### client（`t_oidc_client`）
+##### client（`t_oidc_client`）
 
 | 属性名 | 类型 | 说明 |
 |--------|------|------|
@@ -251,7 +501,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | description | text | 描述 |
 | status | string | `open` / `closed` |
 
-#### resourceServer（`t_oidc_resource_server`）
+##### resourceServer（`t_oidc_resource_server`）
 
 | 属性名 | 类型 | 说明 |
 |--------|------|------|
@@ -263,7 +513,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | description | text | 描述 |
 | status | string | `open` / `closed` |
 
-#### key（`t_oidc_key`）
+##### key（`t_oidc_key`）
 
 | 属性名 | 类型 | 说明 |
 |--------|------|------|
@@ -274,7 +524,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | status | string | `active` 当前签名 / `next` 已发布待启用 / `retired` 仅验签 |
 | activatedAt / retiredAt | Date | 启用 / 退役时间 |
 
-#### sessionTenant（`t_oidc_session_tenant`）
+##### sessionTenant（`t_oidc_session_tenant`）
 
 | 属性名 | 类型 | 说明 |
 |--------|------|------|
@@ -282,9 +532,9 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | accountId | string | 用户 id |
 | tenantId | string | 会话当前租户 |
 
-### 机制说明
+#### 机制说明
 
-#### 自定义 adapter（如 Redis）
+##### 自定义 adapter（如 Redis）
 
 默认 oidc-provider 的数据存于 `payload` 表。高并发场景可通过 `adapter` 改用 Redis 等存储，插件不内置实现，由业务按以下约定自行编写。Client 始终从 `client` 表读取，不经过 adapter。
 
@@ -367,7 +617,7 @@ fastify.register(require('@kne/fastify-oidc'), {
 
 > **注意**：账号索引集合（`oidc:account:*`）不会随成员过期自动清理，`findGrantIdsByAccountId` / `findByAccountId` 需过滤已过期的 id，或定期清理。
 
-#### 撤销列表存储
+##### 撤销列表存储
 
 `revocationStore` / `dpopReplayStore` 只需实现两个方法，可直接用 Redis：
 
@@ -385,7 +635,7 @@ const store = {
 fastify.register(require('@kne/fastify-oidc'), { revocationStore: store, dpopReplayStore: store });
 ```
 
-#### 签名密钥轮换
+##### 签名密钥轮换
 
 | 状态 | 用途 |
 |------|------|
@@ -395,7 +645,7 @@ fastify.register(require('@kne/fastify-oidc'), { revocationStore: store, dpopRep
 
 `key.rotate()`：active → retired、next → active、生成新 next。其它实例每 `keyReloadInterval` 秒检测密钥指纹变化并重建 provider。
 
-#### Token Exchange
+##### Token Exchange
 
 `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`，调用方为已认证的 confidential client，且 `grant_types` 包含该值：
 
@@ -408,7 +658,7 @@ fastify.register(require('@kne/fastify-oidc'), { revocationStore: store, dpopRep
 
 新 token 保留原用户与租户，`act.sub` 为调用方 client_id。
 
-#### 国际化
+##### 国际化
 
 返回给前端的错误信息、OAuth `error_description`、登出页文案均通过 [@kne/fastify-intl](https://www.npmjs.com/package/@kne/fastify-intl) 按请求语言翻译：
 

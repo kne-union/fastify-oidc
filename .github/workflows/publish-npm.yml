@@ -11,3 +11,7 @@ jobs:
     secrets: inherit
     with:
       package_name: '@kne/fastify-oidc'
+      run_test: true
+      node-versions: '["22"]'
+      install-command: npm install
+      test-command: npm test

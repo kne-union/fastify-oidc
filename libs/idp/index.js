@@ -51,7 +51,7 @@ module.exports = ({ fastify, options, translator }) => {
         Object.assign(
           {
             clientId: runtime.clientId,
-            clientName: `${options.name} 前端`,
+            clientName: options.name,
             redirect_uris: [`${runtime.origin}${options.callbackPath}`],
             post_logout_redirect_uris: [`${runtime.origin}/`],
             token_endpoint_auth_method: 'none',

@@ -34,6 +34,7 @@ describe('@kne/fastify-oidc central 模式', function () {
       users: USERS,
       memberships: MEMBERSHIPS,
       oidc: {
+        isMain: true,
         resourceServers: [{ identifier: `${childOrigin}/api`, name: '子项目 API', includePermissions: true }],
         clients: [
           {
@@ -76,6 +77,17 @@ describe('@kne/fastify-oidc central 模式', function () {
     expect(child.fastify.oidc.idp).to.equal(null);
     expect(child.fastify.oidc.models).to.equal(undefined);
     expect((await fetch(`${childOrigin}/oidc/.well-known/openid-configuration`)).status).to.equal(404);
+  });
+
+  it('should expose public login config pointing to idp', async () => {
+    const res = await fetch(`${childOrigin}/api/oidc/config`);
+    expect(res.status).to.equal(200);
+    expect(await res.json()).to.deep.equal({ mode: 'central', isMain: false, issuer: `${idpOrigin}/oidc`, clientId: 'child-spa', audience: `${childOrigin}/api` });
+  });
+
+  it('should mark main project in public login config', async () => {
+    const res = await fetch(`${idpOrigin}/api/oidc/config`);
+    expect((await res.json()).isMain).to.equal(true);
   });
 
   it('should sso into child and mirror user from idp', async () => {

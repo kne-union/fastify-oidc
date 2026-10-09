@@ -151,6 +151,7 @@ fastify.register(require('@kne/fastify-file-manager'), {
 |----------|------|------|
 | `ORIGIN` | 是 | 本项目对外访问的 origin，如 `https://a.example.com` |
 | `AUTH_MODE` | 否 | `standalone`（默认）/ `central` |
+| `OIDC_IS_MAIN` | 否 | `true` 表示主系统（子项目以本项目为 IdP），前端登录页据此不显示 SSO 入口 |
 | `OIDC_KEY_SECRET` | 是（standalone） | 加密签名私钥与 client_secret 的密钥，未配置时使用不安全的默认值并告警 |
 | `OIDC_COOKIE_SECRET` | 否 | 交互 cookie 签名密钥，默认由 `OIDC_KEY_SECRET` 派生 |
 
@@ -219,7 +220,7 @@ import { loadModule } from '@kne/remote-loader';
 import createAjax from '@kne/axios-fetch';
 
 export const globalInit = async () => {
-  const { createOidcClient } = await loadModule('components-admin:Oidc');
+  const { default: createOidcClient } = await loadModule('components-admin:Oidc@createOidcClient');
   const oidc = createOidcClient({
     issuer: window.runtimeOidcIssuer || `${window.location.origin}/oidc`,
     clientId: window.runtimeOidcClientId,
@@ -258,6 +259,7 @@ oidc-provider 9.x 为 ESM 包，本插件通过动态 `import()` 加载，要求
 | prefix | string | 否 | `/api/oidc` | 插件接口前缀（交互、管理、服务接口） |
 | dbTableNamePrefix | string | 否 | `t_` | 表名前缀，表名形如 `t_oidc_payload` |
 | mode | string | 否 | `AUTH_MODE` 或 `standalone` | `standalone` / `central` |
+| isMain | boolean | 否 | `OIDC_IS_MAIN === 'true'` | 是否为主系统（其它子项目以本项目为 IdP），仅 standalone 有效；通过 `GET /api/oidc/config` 告知前端，主系统登录页不显示 SSO 入口 |
 | origin | string | 是 | `ORIGIN` | 本项目对外 origin |
 | issuer | string | central 必填 | `OIDC_ISSUER`；standalone 为 `${origin}${mountPath}` | issuer 必须带路径 |
 | mountPath | string | 否 | `/oidc` | standalone 未配置 issuer 时 IdP 的挂载路径 |
@@ -287,7 +289,7 @@ oidc-provider 9.x 为 ESM 包，本插件通过动态 `import()` 加载，要求
 | includePermissions | boolean | 否 | `false` | 资源服务未设置时，token 是否携带 permissions |
 | defaultResourceScope | string | 否 | `api` | 资源服务默认 scope |
 | seedSelf | boolean | 否 | `true` | 启动时自动登记本项目 SPA client、本项目 API、服务接口资源 |
-| selfClient | object | 否 | `{}` | 覆盖默认 SPA client 的 metadata |
+| selfClient | object | 否 | `{}` | 覆盖默认 SPA client 的字段与 metadata，如 `{ clientName: '系统名称' }`（默认名称为 `name`）；仅首次登记时生效，已存在的 client 不会被覆盖 |
 | clients | array | 否 | `[]` | 启动时登记的 client（已存在则跳过），字段同管理接口 `client/create`，metadata 直接平铺 |
 | resourceServers | array | 否 | `[]` | 启动时登记的资源服务（已存在则跳过） |
 | serviceScopes | array | 否 | `['user:read', 'tenant:read']` | 服务接口资源的 scope |
@@ -338,6 +340,30 @@ oidc-provider 9.x 为 ESM 包，本插件通过动态 `import()` 加载，要求
 | userinfo | `GET /oidc/me` | 用户信息（需 issuer 作为 aud 的 token） |
 | end_session | `GET /oidc/session/end` | RP-Initiated Logout |
 | revocation / introspection | `POST /oidc/token/revocation`、`POST /oidc/token/introspection` | 撤销、内省 |
+
+##### 前端登录配置（standalone / central）
+
+###### GET /api/oidc/config
+
+免登录，供前端登录页判断是否支持 SSO 以及当前模式（如 components-admin 的 Account 登录页）。只返回公开信息：
+
+```json
+{
+  "mode": "central",
+  "isMain": false,
+  "issuer": "https://main.example.com/oidc",
+  "clientId": "child-spa",
+  "audience": "https://child.example.com/api"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| mode | `standalone` / `central` |
+| isMain | 是否为主系统（`isMain` 配置），central 恒为 `false` |
+| issuer | IdP issuer；central 为主项目 issuer |
+| clientId | 本项目前端使用的 client_id（`clientId` 配置，默认 `oidc-spa`） |
+| audience | 本项目资源服务标识 |
 
 ##### 登录交互（standalone）
 

@@ -23,6 +23,7 @@ module.exports = fp(
         prefix: '/api/oidc',
         dbTableNamePrefix: 't_',
         mode: env.AUTH_MODE || 'standalone',
+        isMain: env.OIDC_IS_MAIN === 'true',
         origin: env.ORIGIN,
         issuer: env.OIDC_ISSUER,
         mountPath: '/oidc',

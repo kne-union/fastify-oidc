@@ -7,24 +7,40 @@ const httpErrors = require('http-errors');
  */
 module.exports = fp(
   async (fastify, { users = [], getUserAuthenticate } = {}) => {
-    const models = await fastify.sequelize.addModels(
-      ({ DataTypes }) => ({
-        name: 'user',
-        model: {
-          nickname: DataTypes.STRING,
-          avatar: DataTypes.STRING,
-          email: { type: DataTypes.STRING, unique: true },
-          phone: { type: DataTypes.STRING, unique: true },
-          gender: DataTypes.STRING,
-          birthday: DataTypes.DATE,
-          description: DataTypes.TEXT,
-          status: { type: DataTypes.INTEGER, defaultValue: 0 }
-        }
-      }),
-      { prefix: 't_account_' }
+    const models = Object.assign(
+      await fastify.sequelize.addModels(
+        ({ DataTypes, definePrimaryType }) => ({
+          name: 'user',
+          model: {
+            nickname: DataTypes.STRING,
+            avatar: DataTypes.STRING,
+            email: { type: DataTypes.STRING, unique: true },
+            phone: { type: DataTypes.STRING, unique: true },
+            userAccountId: definePrimaryType('userAccountId', { allowNull: false }),
+            gender: DataTypes.STRING,
+            birthday: DataTypes.DATE,
+            description: DataTypes.TEXT,
+            isSuperAdmin: DataTypes.BOOLEAN,
+            status: { type: DataTypes.INTEGER, defaultValue: 0 }
+          }
+        }),
+        { prefix: 't_account_' }
+      ),
+      await fastify.sequelize.addModels(
+        ({ DataTypes, definePrimaryType }) => ({
+          name: 'userAccount',
+          model: {
+            password: { type: DataTypes.STRING, allowNull: false },
+            salt: { type: DataTypes.STRING, allowNull: false },
+            belongToUserId: definePrimaryType('belongToUserId')
+          }
+        }),
+        { prefix: 't_account_' }
+      )
     );
     const passwords = new Map(users.map(user => [String(user.id), user.password]));
-    const superAdmins = new Set(users.filter(user => user.isSuperAdmin).map(user => String(user.id)));
+
+    const checkIsSuperAdmin = async ({ id }) => (await models.user.findByPk(id))?.isSuperAdmin === true;
 
     const getUser = async ({ id }) => {
       const user = await models.user.findByPk(id);
@@ -57,19 +73,22 @@ module.exports = fp(
 
     fastify.decorate('account', {
       models,
-      services: { user: { getUser }, account: { verifyCredentials } },
+      services: { user: { getUser }, account: { verifyCredentials }, admin: { checkIsSuperAdmin } },
       authenticate: {
         user: async request => (getUserAuthenticate ? getUserAuthenticate()(request) : tokenUser(request)),
         tokenUser,
         admin: async request => {
-          if (!superAdmins.has(String(request.userInfo?.id))) {
+          if (!(await checkIsSuperAdmin({ id: request.userInfo?.id }))) {
             throw new httpErrors.Unauthorized('需要超级管理员权限');
           }
         }
       },
       seed: async () => {
         for (const { password, isSuperAdmin, ...user } of users) {
-          await models.user.create(Object.assign({ status: 0 }, user, { id: String(user.id) }), { hooks: false });
+          const account = await models.userAccount.create({ password: 'hash', salt: 'salt' });
+          await models.user.create(Object.assign({ status: 0 }, user, { id: String(user.id), userAccountId: account.id, isSuperAdmin: isSuperAdmin === true }), {
+            hooks: false
+          });
         }
       }
     });

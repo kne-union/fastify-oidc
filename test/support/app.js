@@ -20,6 +20,7 @@ const addTestRoutes = fastify => {
   fastify.get('/api/me', { onRequest: [authenticate.user] }, async request => ({ user: Object.assign({}, request.user, { payload: undefined }), userInfo: request.userInfo }));
   fastify.get('/api/tenant-me', { onRequest: [authenticate.user, authenticate.tenantUser] }, async request => request.tenantUserInfo);
   fastify.get('/api/need-permission', { onRequest: [authenticate.user, authenticate.permission('order:read')] }, async () => ({ ok: true }));
+  fastify.get('/api/admin-only', { onRequest: [authenticate.user, authenticate.admin] }, async () => ({ ok: true }));
   fastify.get('/api/service-only', { onRequest: [authenticate.client('user:read')] }, async request => ({ clientId: request.user.clientId }));
 };
 

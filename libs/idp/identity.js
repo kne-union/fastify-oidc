@@ -26,6 +26,18 @@ module.exports = ({ fastify, options }) => {
     }
   };
 
+  const isSuperAdmin = async id => {
+    const check = account().services.admin?.checkIsSuperAdmin;
+    if (!check) {
+      return undefined;
+    }
+    try {
+      return (await check({ id })) === true;
+    } catch (e) {
+      return undefined;
+    }
+  };
+
   const toProfileClaims = user => ({
     sub: String(user.id),
     name: user.nickname || undefined,
@@ -104,5 +116,5 @@ module.exports = ({ fastify, options }) => {
     };
   };
 
-  return { tenantEnabled, getUser, toProfileClaims, findAccount, verifyCredentials, listTenants, isTenantMember, getTenantContext };
+  return { tenantEnabled, getUser, isSuperAdmin, toProfileClaims, findAccount, verifyCredentials, listTenants, isTenantMember, getTenantContext };
 };

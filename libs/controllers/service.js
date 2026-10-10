@@ -26,11 +26,12 @@ module.exports = fp(async (fastify, options) => {
       schema: { tags, summary: '获取用户资料', query: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } }
     },
     wrap(async request => {
-      const user = await getIdp().identity.getUser(request.query.id);
+      const { identity } = getIdp();
+      const user = await identity.getUser(request.query.id);
       if (!user) {
         throw createError(NotFound, 'userNotFound');
       }
-      return Object.assign(pick(user, PROFILE_FIELDS), { id: String(user.id) });
+      return Object.assign(pick(user, PROFILE_FIELDS), { id: String(user.id), isSuperAdmin: await identity.isSuperAdmin(user.id) });
     })
   );
 

@@ -440,7 +440,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 | 接口 | scope | 说明 |
 |------|-------|------|
-| `GET /api/oidc/service/user?id=` | `user:read` | 用户资料 `{ id, nickname, avatar, email, phone, gender, birthday, description, status }` |
+| `GET /api/oidc/service/user?id=` | `user:read` | 用户资料 `{ id, nickname, avatar, email, phone, gender, birthday, description, status, isSuperAdmin }` |
 | `GET /api/oidc/service/tenant-user?userId=&tenantId=` | `tenant:read` | 用户在租户内的身份、角色、权限（fastify-tenant `getTenantUserInfo` 结果） |
 
 ##### Back-Channel Logout（central）
@@ -478,6 +478,8 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | payload | object | 原始 claims |
 
 兼容字段：`request.authenticatePayload = { id, tenantId }`，`request.userInfo` 为 fastify-account 用户（central 为镜像用户）。
+
+central 模式下镜像用户的 `isSuperAdmin` 随主项目同步（升降级均以主项目为准，生效延迟 ≤ `userMirrorTTL`），`authenticate.admin` 仍读本地字段；需配置 `serviceClient`。
 
 ##### 其它
 

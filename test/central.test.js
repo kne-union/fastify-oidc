@@ -61,7 +61,8 @@ describe('@kne/fastify-oidc central 模式', function () {
       oidc: {
         issuer: `${idpOrigin}/oidc`,
         clientId: 'child-spa',
-        serviceClient: { clientId: 'child-service', clientSecret: 'child-secret' }
+        serviceClient: { clientId: 'child-service', clientSecret: 'child-secret' },
+        userMirrorTTL: 0
       }
     });
     idpAs = await discover(`${idpOrigin}/oidc`);
@@ -124,6 +125,15 @@ describe('@kne/fastify-oidc central 模式', function () {
     expect(me.body.userInfo.nickname).to.equal('王五');
     const mirror = await child.fastify.account.models.user.findByPk('2001');
     expect(mirror.email).to.equal('wangwu@test.com');
+    const mirrorAccount = await child.fastify.account.models.userAccount.findByPk(mirror.userAccountId);
+    expect(String(mirrorAccount.belongToUserId)).to.equal('2001');
+
+    expect(mirror.isSuperAdmin).to.equal(true);
+    expect((await getJson(`${childOrigin}/api/admin-only`, childTokens.access_token)).status).to.equal(200);
+    await idp.fastify.account.models.user.update({ isSuperAdmin: false }, { where: { id: '2001' } });
+    expect((await getJson(`${childOrigin}/api/admin-only`, childTokens.access_token)).status).to.equal(401);
+    await idp.fastify.account.models.user.update({ isSuperAdmin: true }, { where: { id: '2001' } });
+    expect((await getJson(`${childOrigin}/api/admin-only`, childTokens.access_token)).status).to.equal(200);
 
     const tenantMe = await getJson(`${childOrigin}/api/tenant-me`, childTokens.access_token);
     expect(tenantMe.body.tenantId).to.equal('tenant-x');

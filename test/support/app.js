@@ -27,14 +27,14 @@ const addTestRoutes = fastify => {
 /**
  * 启动一个真实监听端口的应用（oidc-provider 的 issuer / 回调地址都需要可访问的 origin）
  */
-const createApp = async ({ mode = 'standalone', users = [], memberships, oidc: oidcOptions = {}, intl, port } = {}) => {
+const createApp = async ({ mode = 'standalone', users = [], memberships, oidc: oidcOptions = {}, intl, port, db, beforeSync } = {}) => {
   port = port || (await getFreePort());
   const origin = `http://127.0.0.1:${port}`;
   const fastify = Fastify({ logger: false });
   if (intl) {
     await fastify.register(require('@kne/fastify-intl'), intl);
   }
-  await fastify.register(require('@kne/fastify-sequelize'), { db: { dialect: 'sqlite', storage: ':memory:', logging: false } });
+  await fastify.register(require('@kne/fastify-sequelize'), { db: db || { dialect: 'sqlite', storage: ':memory:', logging: false } });
   await fastify.register(fakeAccount, { users, getUserAuthenticate: () => fastify.oidc.authenticate.user });
   if (memberships) {
     await fastify.register(fakeTenant, { memberships });
@@ -55,6 +55,9 @@ const createApp = async ({ mode = 'standalone', users = [], memberships, oidc: o
   );
   addTestRoutes(fastify);
   await fastify.ready();
+  if (beforeSync) {
+    await beforeSync(fastify);
+  }
   await fastify.sequelize.sync();
   await fastify.account.seed();
   await fastify.oidc.whenReady();

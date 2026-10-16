@@ -12,6 +12,10 @@ module.exports = fp(async (fastify, options) => {
   const { Op } = fastify.sequelize.Sequelize;
   const secret = options.keyEncryptionSecret;
 
+  // 文件型 sqlite 下 sequelize 会为每个事务单独打开一个连接，与默认连接上其他插件的写入争抢文件锁而 SQLITE_BUSY；
+  // sqlite 只用于单进程本地开发，直接在共享的默认连接上执行，同一连接内的写入天然串行
+  const withTransaction = fn => (fastify.sequelize.instance.getDialect() === 'sqlite' ? fn() : fastify.sequelize.instance.transaction(fn));
+
   const generate = async ({ status, transaction }) => {
     const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const kid = crypto.randomUUID();
@@ -42,7 +46,7 @@ module.exports = fp(async (fastify, options) => {
   };
 
   const ensureKeys = async () => {
-    await fastify.sequelize.instance.transaction(async transaction => {
+    await withTransaction(async transaction => {
       if (!(await models.key.count({ where: { status: 'active' }, transaction }))) {
         await generate({ status: 'active', transaction });
       }
@@ -83,7 +87,7 @@ module.exports = fp(async (fastify, options) => {
   };
 
   const rotate = async () => {
-    await fastify.sequelize.instance.transaction(async transaction => {
+    await withTransaction(async transaction => {
       const now = new Date();
       await models.key.update({ status: 'retired', retiredAt: now }, { where: { status: 'active' }, transaction });
       const next = await models.key.findOne({ where: { status: 'next' }, order: [['createdAt', 'ASC']], transaction });

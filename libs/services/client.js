@@ -154,9 +154,28 @@ module.exports = fp(async (fastify, options) => {
     });
   };
 
+  // 已存在的客户端只追加配置中缺失的回调地址（如 ORIGIN 变更），不覆盖管理端维护的其他字段
+  const mergeSeedUris = async (item, metadata) => {
+    const next = Object.assign({}, item.metadata);
+    let changed = false;
+    ['redirect_uris', 'post_logout_redirect_uris'].forEach(key => {
+      const current = Array.isArray(next[key]) ? next[key] : [];
+      const missing = (metadata[key] || []).filter(uri => !current.includes(uri));
+      if (missing.length) {
+        next[key] = [...current, ...missing];
+        changed = true;
+      }
+    });
+    if (changed) {
+      await item.update({ metadata: next });
+    }
+  };
+
   const seed = async clients => {
     for (const { clientId, clientName, clientSecret, allowedResources, description, ...metadata } of clients || []) {
-      if (await models.client.count({ where: { clientId } })) {
+      const item = await models.client.findOne({ where: { clientId } });
+      if (item) {
+        await mergeSeedUris(item, metadata);
         continue;
       }
       await create({ clientId, clientName, clientSecret, metadata, allowedResources, description });

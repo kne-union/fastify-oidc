@@ -269,6 +269,7 @@ oidc-provider 9.x 为 ESM 包，本插件通过动态 `import()` 加载，要求
 | accountNamespace | string | 否 | `account` | fastify-account 命名空间 |
 | tenantNamespace | string | 否 | `tenant` | fastify-tenant 命名空间，不存在时不启用租户 |
 | intlNamespace | string | 否 | `intl` | @kne/fastify-intl 命名空间，不存在时返回内置中文文案 |
+| fileNamespace | string | 否 | `fileManager` | @kne/fastify-file-manager 命名空间：主项目用它把头像 id 解析成 `avatarUrl`，子项目用它把头像拷到本地文件库；不存在时不处理头像 |
 
 ##### IdP（standalone）
 
@@ -440,7 +441,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 | 接口 | scope | 说明 |
 |------|-------|------|
-| `GET /api/oidc/service/user?id=` | `user:read` | 用户资料 `{ id, nickname, avatar, email, phone, gender, birthday, description, status, isSuperAdmin }` |
+| `GET /api/oidc/service/user?id=` | `user:read` | 用户资料 `{ id, nickname, avatar, avatarUrl, email, phone, gender, birthday, description, status, isSuperAdmin }`；`avatarUrl` 为头像的完整下载地址（经 `fileNamespace` 解析，无文件服务或解析失败时为 `null`） |
 | `GET /api/oidc/service/tenant-user?userId=&tenantId=` | `tenant:read` | 用户在租户内的身份、角色、权限（fastify-tenant `getTenantUserInfo` 结果） |
 
 ##### Back-Channel Logout（central）
@@ -480,6 +481,8 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 兼容字段：`request.authenticatePayload = { id, tenantId }`，`request.userInfo` 为 fastify-account 用户（central 为镜像用户）。
 
 central 模式下镜像用户的 `isSuperAdmin` 随主项目同步（升降级均以主项目为准，生效延迟 ≤ `userMirrorTTL`），`authenticate.admin` 仍读本地字段；需配置 `serviceClient`。
+
+central 模式下主项目的 `avatar` 是主项目文件库的 id，子项目无法解析。子项目注册了 fastify-file-manager 时，镜像会按 `avatarUrl` 把头像拷到本地文件库，`avatar` 存本地文件 id（文件记录 `options.oidcAvatarSource` 记来源 id，主项目头像不变不重复下载，变更时原地替换）；主项目未返回 `avatarUrl` 或下载失败时保留已同步的头像，没有则置空。子项目未注册文件服务时 `avatar` 仍为主项目原值。主项目需同时升级才会返回 `avatarUrl`。
 
 ##### 其它
 

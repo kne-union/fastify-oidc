@@ -2,6 +2,7 @@ const net = require('node:net');
 const Fastify = require('fastify');
 const fakeAccount = require('./fake-account');
 const fakeTenant = require('./fake-tenant');
+const fakeFileManager = require('./fake-file-manager');
 const oidc = require('../../index');
 
 const getFreePort = () =>
@@ -27,7 +28,7 @@ const addTestRoutes = fastify => {
 /**
  * 启动一个真实监听端口的应用（oidc-provider 的 issuer / 回调地址都需要可访问的 origin）
  */
-const createApp = async ({ mode = 'standalone', users = [], memberships, oidc: oidcOptions = {}, intl, port, db, beforeSync } = {}) => {
+const createApp = async ({ mode = 'standalone', users = [], memberships, files, oidc: oidcOptions = {}, intl, port, db, beforeSync } = {}) => {
   port = port || (await getFreePort());
   const origin = `http://127.0.0.1:${port}`;
   const fastify = Fastify({ logger: false });
@@ -38,6 +39,9 @@ const createApp = async ({ mode = 'standalone', users = [], memberships, oidc: o
   await fastify.register(fakeAccount, { users, getUserAuthenticate: () => fastify.oidc.authenticate.user });
   if (memberships) {
     await fastify.register(fakeTenant, { memberships });
+  }
+  if (files) {
+    await fastify.register(fakeFileManager, { files });
   }
   await fastify.register(
     oidc,

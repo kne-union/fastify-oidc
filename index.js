@@ -50,6 +50,7 @@ module.exports = fp(
         accountNamespace: 'account',
         tenantNamespace: 'tenant',
         intlNamespace: 'intl',
+        fileNamespace: 'fileManager',
         clients: [],
         resourceServers: [],
         seedSelf: true,

@@ -19,6 +19,27 @@ module.exports = fp(async (fastify, options) => {
   const getIdp = () => fastify[options.name].idp;
   const tags = ['OIDC 服务接口'];
 
+  // avatar 是主项目文件库的 id，子项目无法解析，额外给出可直接下载的地址
+  const resolveAvatarUrl = async avatar => {
+    if (!avatar) {
+      return null;
+    }
+    if (/^https?:\/\//.test(avatar)) {
+      return avatar;
+    }
+    const getFileUrl = fastify[options.fileNamespace]?.services?.getFileUrl;
+    if (typeof getFileUrl !== 'function') {
+      return null;
+    }
+    try {
+      const url = await getFileUrl({ id: avatar });
+      return url ? new URL(url, options.runtime.origin).href : null;
+    } catch (e) {
+      fastify.log.warn({ err: e, avatar }, 'fastify-oidc: 解析用户头像地址失败');
+      return null;
+    }
+  };
+
   fastify.get(
     `${options.prefix}/service/user`,
     {
@@ -31,7 +52,11 @@ module.exports = fp(async (fastify, options) => {
       if (!user) {
         throw createError(NotFound, 'userNotFound');
       }
-      return Object.assign(pick(user, PROFILE_FIELDS), { id: String(user.id), isSuperAdmin: await identity.isSuperAdmin(user.id) });
+      return Object.assign(pick(user, PROFILE_FIELDS), {
+        id: String(user.id),
+        avatarUrl: await resolveAvatarUrl(user.avatar),
+        isSuperAdmin: await identity.isSuperAdmin(user.id)
+      });
     })
   );
 

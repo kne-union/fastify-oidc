@@ -38,8 +38,8 @@
 | includePermissions | boolean | 否 | `false` | 资源服务未设置时，token 是否携带 permissions |
 | defaultResourceScope | string | 否 | `api` | 资源服务默认 scope |
 | seedSelf | boolean | 否 | `true` | 启动时自动登记本项目 SPA client、本项目 API、服务接口资源 |
-| selfClient | object | 否 | `{}` | 覆盖默认 SPA client 的字段与 metadata，如 `{ clientName: '系统名称' }`（默认名称为 `name`）；仅首次登记时生效；已存在的 client 只会追加缺失的 `redirect_uris` / `post_logout_redirect_uris`（如 `ORIGIN` 变更），其他字段不覆盖 |
-| clients | array | 否 | `[]` | 启动时登记的 client（已存在则只追加缺失的 `redirect_uris` / `post_logout_redirect_uris`），字段同管理接口 `client/create`，metadata 直接平铺 |
+| selfClient | object | 否 | `{}` | 覆盖默认 SPA client 的字段与 metadata，如 `{ clientName: '系统名称' }`（默认名称为 `name`）；仅首次登记时生效；已存在的 client 只会追加缺失的 `redirect_uris` / `post_logout_redirect_uris` / `allowedResources`（如 `ORIGIN` 变更），其他字段不覆盖 |
+| clients | array | 否 | `[]` | 启动时登记的 client（已存在则只追加缺失的 `redirect_uris` / `post_logout_redirect_uris` / `allowedResources`），字段同管理接口 `client/create`，metadata 直接平铺 |
 | resourceServers | array | 否 | `[]` | 启动时登记的资源服务（已存在则跳过） |
 | serviceScopes | array | 否 | `['user:read', 'tenant:read']` | 服务接口资源的 scope |
 | getAuthenticate | function | 否 | 见下文 | 管理接口鉴权，参数为 `client:manage` / `resource-server:manage` / `key:manage` / `session:manage` |

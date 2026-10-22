@@ -154,20 +154,29 @@ module.exports = fp(async (fastify, options) => {
     });
   };
 
-  // 已存在的客户端只追加配置中缺失的回调地址（如 ORIGIN 变更），不覆盖管理端维护的其他字段
-  const mergeSeedUris = async (item, metadata) => {
-    const next = Object.assign({}, item.metadata);
-    let changed = false;
+  const appendMissing = (current, values) => {
+    const list = Array.isArray(current) ? current : [];
+    const missing = (values || []).filter(value => !list.includes(value));
+    return missing.length ? [...list, ...missing] : null;
+  };
+
+  // 已存在的客户端只追加配置中缺失的回调地址与资源（如 ORIGIN 变更），不覆盖管理端维护的其他字段
+  const mergeSeed = async (item, { metadata, allowedResources }) => {
+    const nextMetadata = Object.assign({}, item.metadata);
+    const patch = {};
     ['redirect_uris', 'post_logout_redirect_uris'].forEach(key => {
-      const current = Array.isArray(next[key]) ? next[key] : [];
-      const missing = (metadata[key] || []).filter(uri => !current.includes(uri));
-      if (missing.length) {
-        next[key] = [...current, ...missing];
-        changed = true;
+      const next = appendMissing(nextMetadata[key], metadata[key]);
+      if (next) {
+        nextMetadata[key] = next;
+        patch.metadata = nextMetadata;
       }
     });
-    if (changed) {
-      await item.update({ metadata: next });
+    const nextResources = appendMissing(item.allowedResources, allowedResources);
+    if (nextResources) {
+      patch.allowedResources = nextResources;
+    }
+    if (Object.keys(patch).length) {
+      await item.update(patch);
     }
   };
 
@@ -175,7 +184,7 @@ module.exports = fp(async (fastify, options) => {
     for (const { clientId, clientName, clientSecret, allowedResources, description, ...metadata } of clients || []) {
       const item = await models.client.findOne({ where: { clientId } });
       if (item) {
-        await mergeSeedUris(item, metadata);
+        await mergeSeed(item, { metadata, allowedResources });
         continue;
       }
       await create({ clientId, clientName, clientSecret, metadata, allowedResources, description });

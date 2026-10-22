@@ -4,8 +4,30 @@ const { encrypt, decrypt } = require('../libs/utils/crypto');
 const createRevocation = require('../libs/resource/revocation');
 const { normalizeClaims } = require('../libs/resource/normalize-user');
 const { extractToken } = require('../libs/resource/authenticate');
+const createUserMirror = require('../libs/resource/user-mirror');
 
 const base = { name: 'oidc', prefix: '/api/oidc', mountPath: '/oidc' };
+
+const createMirror = ({ remote, files, current }) => {
+  const rows = new Map();
+  const makeRow = values => {
+    const data = Object.assign({}, values);
+    const row = { get: () => Object.assign({}, data), update: async patch => Object.assign(data, patch) };
+    ['id', 'avatar'].forEach(key => Object.defineProperty(row, key, { get: () => data[key] }));
+    rows.set(String(data.id), row);
+    return row;
+  };
+  if (current) {
+    makeRow(current);
+  }
+  const fastify = {
+    account: { models: { user: { rawAttributes: {}, findByPk: async id => rows.get(String(id)) || null, create: async values => makeRow(values) } } },
+    fileManager: files ? { services: files } : undefined,
+    log: { warn: () => {} }
+  };
+  const serviceClient = { enabled: () => true, getUserProfile: async () => remote };
+  return createUserMirror({ fastify, options: { accountNamespace: 'account', fileNamespace: 'fileManager', userMirrorTTL: 0 }, serviceClient });
+};
 
 describe('@kne/fastify-oidc 单元测试', () => {
   describe('resolve-options', () => {
@@ -94,6 +116,39 @@ describe('@kne/fastify-oidc 单元测试', () => {
       expect(extractToken({ headers: { accept: 'text/event-stream' }, query })).to.include({ scheme: 'bearer', token: 'abc' });
       expect(extractToken({ headers: { accept: 'text/event-stream' }, query: { authorization: 'DPoP abc', DPoP: 'proof' } })).to.include({ scheme: 'dpop', token: 'abc', proof: 'proof' });
       expect(extractToken({ headers: { accept: 'text/event-stream', authorization: 'Bearer header' }, query })).to.deep.equal({ scheme: 'bearer', token: 'header' });
+    });
+  });
+
+  describe('user-mirror 头像', () => {
+    it('should keep idp avatar id when child has no file manager', async () => {
+      const mirror = createMirror({ remote: { nickname: 'a', avatar: 'idp-1', avatarUrl: 'http://idp/file/idp-1' } });
+      expect((await mirror.ensure('u1')).avatar).to.equal('idp-1');
+    });
+
+    it('should clear unresolvable avatar when idp does not return avatarUrl', async () => {
+      const files = { uploadFromUrl: async () => ({ id: 'local' }), getFileInstance: async () => Promise.reject(new Error('文件不存在')) };
+      const mirror = createMirror({ remote: { nickname: 'a', avatar: 'idp-1' }, files, current: { id: 'u1', avatar: 'idp-1' } });
+      expect((await mirror.ensure('u1')).avatar).to.equal(null);
+    });
+
+    it('should keep previous mirrored avatar when download fails', async () => {
+      const files = {
+        uploadFromUrl: async () => Promise.reject(new Error('下载文件失败')),
+        getFileInstance: async () => ({ options: { oidcAvatarSource: 'idp-old' } })
+      };
+      const mirror = createMirror({ remote: { nickname: 'a', avatar: 'idp-new', avatarUrl: 'http://idp/file/idp-new' }, files, current: { id: 'u1', avatar: 'local-1' } });
+      expect((await mirror.ensure('u1')).avatar).to.equal('local-1');
+    });
+
+    it('should not overwrite unrelated local file that happens to share the id', async () => {
+      const calls = [];
+      const files = {
+        uploadFromUrl: async params => calls.push(params) && { id: 'local-new' },
+        getFileInstance: async () => ({ options: {} })
+      };
+      const mirror = createMirror({ remote: { nickname: 'a', avatar: 'idp-1', avatarUrl: 'http://idp/file/idp-1' }, files, current: { id: 'u1', avatar: 'idp-1' } });
+      expect((await mirror.ensure('u1')).avatar).to.equal('local-new');
+      expect(calls[0].id).to.equal(undefined);
     });
   });
 });

@@ -3,6 +3,7 @@ const { pick } = require('lodash');
 
 const PROFILE_FIELDS = ['nickname', 'avatar', 'email', 'phone', 'gender', 'birthday', 'description'];
 const USER_FIELDS = ['id', ...PROFILE_FIELDS, 'status'];
+const AVATAR_SOURCE = 'oidcAvatarSource';
 
 /**
  * central 模式：子项目保留 fastify-account 的用户表作为镜像，按 sub 即时创建 / 定期同步，
@@ -12,13 +13,50 @@ module.exports = ({ fastify, options, serviceClient }) => {
   const cache = new Map();
   const getModel = () => fastify[options.accountNamespace].models.user;
 
-  const fetchProfile = async userId => {
+  // 主项目 avatar 是主项目文件库的 id：拷到本地文件库，镜像存本地文件 id；文件记录 options 记来源 id，主项目头像不变就不再下载
+  const syncAvatar = async (remote, current) => {
+    const files = fastify[options.fileNamespace]?.services;
+    if (typeof files?.uploadFromUrl !== 'function') {
+      return remote.avatar;
+    }
+    if (!remote.avatar) {
+      return null;
+    }
+    const mirrored = current ? await Promise.resolve(files.getFileInstance({ id: current })).catch(() => null) : null;
+    const mirroredSource = mirrored?.options?.[AVATAR_SOURCE];
+    if (mirroredSource && mirroredSource === remote.avatar) {
+      return current;
+    }
+    const fallback = mirroredSource ? current : null;
+    if (!remote.avatarUrl) {
+      return fallback;
+    }
+    try {
+      const file = await files.uploadFromUrl({
+        id: mirroredSource ? current : undefined,
+        url: remote.avatarUrl,
+        options: { [AVATAR_SOURCE]: remote.avatar }
+      });
+      return file.id;
+    } catch (e) {
+      fastify.log.warn({ err: e, avatar: remote.avatar }, 'fastify-oidc: 同步主项目用户头像失败');
+      return fallback;
+    }
+  };
+
+  const fetchProfile = async (userId, current) => {
     if (!serviceClient.enabled()) {
       return null;
     }
     try {
       const remote = await serviceClient.getUserProfile(userId);
       const profile = pick(remote, PROFILE_FIELDS);
+      const avatar = await syncAvatar(remote, current?.avatar);
+      if (avatar === undefined) {
+        delete profile.avatar;
+      } else {
+        profile.avatar = avatar;
+      }
       // 主项目超级管理员身份以主项目为准，升降级都同步到镜像，子项目 authenticate.admin 照常读本地 isSuperAdmin
       if (typeof remote?.isSuperAdmin === 'boolean' && getModel().rawAttributes.isSuperAdmin) {
         profile.isSuperAdmin = remote.isSuperAdmin;
@@ -72,7 +110,7 @@ module.exports = ({ fastify, options, serviceClient }) => {
     }
     const model = getModel();
     let row = await model.findByPk(userId);
-    const profile = await fetchProfile(userId);
+    const profile = await fetchProfile(userId, row);
     if (!row) {
       row = await createMirror(userId, profile);
     } else if (profile) {

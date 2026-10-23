@@ -1,4 +1,5 @@
 const { mapTenantImages } = require('../utils/tenant-images');
+const findMirroredFile = require('../utils/find-mirrored-file');
 
 const FAILURE_RETRY_MS = 30 * 1000;
 const FILE_SOURCE = 'oidcHostFileSource';
@@ -54,7 +55,7 @@ module.exports = ({ fastify, options, serviceClient, userMirror }) => {
     const mapping = {};
     for (const [source, url] of Object.entries(fileUrls)) {
       const current = previous[source];
-      if (current && (await Promise.resolve(files.getFileInstance({ id: current })).catch(() => null))) {
+      if (await findMirroredFile(files, current)) {
         mapping[source] = current;
         continue;
       }

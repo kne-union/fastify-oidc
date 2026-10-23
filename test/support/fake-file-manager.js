@@ -27,6 +27,9 @@ module.exports = fp(
 
     const getFileUrl = async ({ id }) => {
       const record = await getFileInstance({ id });
+      if (record.lost) {
+        throw new Error('Not Found');
+      }
       return `${prefix}/file/${record.id}?filename=${record.filename}`;
     };
 

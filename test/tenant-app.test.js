@@ -273,6 +273,13 @@ describe('@kne/fastify-oidc 应用中心与子应用租户', function () {
     await erp.fastify.oidc.tenantSync.sync('tenant-a');
     expect(stats.uploads).to.equal(uploads);
     expect(local.logo).to.equal(files['h-logo']);
+
+    records.get(files['h-logo']).lost = true;
+    await erp.fastify.oidc.tenantSync.sync('tenant-a');
+    expect(stats.uploads).to.equal(uploads + 1);
+    const refreshed = [...erp.fastify.tenant.tenants.values()].find(tenant => tenant.options.managedBy.hostTenantId === 'tenant-a');
+    expect(refreshed.options.managedBy.files['h-logo']).to.not.equal(files['h-logo']);
+    expect(contentOf(refreshed.logo)).to.equal('tenant-logo');
   });
 
   it('independent mode: rejects forged, foreign and replayed notifications', async () => {

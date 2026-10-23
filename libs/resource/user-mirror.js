@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { pick } = require('lodash');
+const findMirroredFile = require('../utils/find-mirrored-file');
 
 const PROFILE_FIELDS = ['nickname', 'avatar', 'email', 'phone', 'gender', 'birthday', 'description'];
 const USER_FIELDS = ['id', ...PROFILE_FIELDS, 'status'];
@@ -22,7 +23,7 @@ module.exports = ({ fastify, options, serviceClient }) => {
     if (!remote.avatar) {
       return null;
     }
-    const mirrored = current ? await Promise.resolve(files.getFileInstance({ id: current })).catch(() => null) : null;
+    const mirrored = await findMirroredFile(files, current);
     const mirroredSource = mirrored?.options?.[AVATAR_SOURCE];
     if (mirroredSource && mirroredSource === remote.avatar) {
       return current;

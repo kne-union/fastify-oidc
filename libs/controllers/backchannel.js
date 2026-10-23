@@ -1,6 +1,7 @@
 const fp = require('fastify-plugin');
 const httpErrors = require('http-errors');
 const { createError } = require('../utils/intl');
+const { empty } = require('../schema/response');
 
 const { BadRequest } = httpErrors;
 
@@ -24,9 +25,11 @@ module.exports = fp(async (fastify, options) => {
       `${options.prefix}/backchannel-logout`,
       {
         schema: {
-          tags: ['OIDC 服务接口'],
+          tags: ['OIDC-服务接口'],
           summary: '接收 back-channel logout 通知',
-          body: { type: 'object', required: ['logout_token'], properties: { logout_token: { type: 'string' } } }
+          description: 'central 子项目接收主项目的登出通知（application/x-www-form-urlencoded），验签后把 sid（或 sub）加入本地撤销列表；logout_token 无效返回 400',
+          body: { type: 'object', required: ['logout_token'], properties: { logout_token: { type: 'string', description: '主项目签发的 logout token（JWT）' } } },
+          response: empty('已处理')
         }
       },
       translator.wrap(async (request, reply) => {

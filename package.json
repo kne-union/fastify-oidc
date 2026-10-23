@@ -50,8 +50,7 @@
     "@kne/fastify-account": ">=2.0.8",
     "@kne/fastify-namespace": "*",
     "@kne/fastify-sequelize": "*",
-    "fastify-plugin": ">=5",
-    "@kne/fastify-tenant": ">=1.0.0-alpha.55"
+    "fastify-plugin": ">=5"
   },
   "devDependencies": {
     "@fastify/env": "^5.0.2",
@@ -80,9 +79,6 @@
   },
   "peerDependenciesMeta": {
     "@kne/fastify-account": {
-      "optional": true
-    },
-    "@kne/fastify-tenant": {
       "optional": true
     }
   }

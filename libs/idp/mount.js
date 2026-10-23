@@ -21,6 +21,12 @@ module.exports = async (fastify, { idp, mountPath, translator }) => {
     idp.handle(req, reply.raw);
   };
 
-  fastify.route({ method: METHODS, url: mountPath, handler });
-  fastify.route({ method: METHODS, url: `${mountPath}/*`, handler });
+  const schema = {
+    tags: ['OIDC-协议端点'],
+    summary: 'OIDC 协议端点（oidc-provider）',
+    description:
+      '原样交给 oidc-provider 处理的标准端点：/.well-known/openid-configuration、/jwks、/auth、/token、/me、/session/end、/token/introspection、/token/revocation 等，请求与响应格式见 OpenID Connect / OAuth 2.0 规范；provider 未就绪时返回 503'
+  };
+  fastify.route({ method: METHODS, url: mountPath, schema, handler });
+  fastify.route({ method: METHODS, url: `${mountPath}/*`, schema, handler });
 };

@@ -1,6 +1,7 @@
 const fp = require('fastify-plugin');
 const httpErrors = require('http-errors');
 const { createError } = require('../utils/intl');
+const { empty } = require('../schema/response');
 
 const { BadRequest } = httpErrors;
 
@@ -35,9 +36,11 @@ module.exports = fp(async (fastify, options) => {
       `${options.prefix}/tenant-sync`,
       {
         schema: {
-          tags: ['OIDC 服务接口'],
+          tags: ['OIDC-服务接口'],
           summary: '接收宿主租户变更通知（independent 子应用）',
-          body: { type: 'object', required: ['tenant_sync_token'], properties: { tenant_sync_token: { type: 'string' } } }
+          description: '验签并校验 jti 防重放后立即返回，后台回拉该租户快照；令牌无效或重放返回 400',
+          body: { type: 'object', required: ['tenant_sync_token'], properties: { tenant_sync_token: { type: 'string', description: '宿主签发的租户同步令牌（JWT），含 tenant_id' } } },
+          response: empty('已接收，后台同步')
         }
       },
       translator.wrap(async (request, reply) => {

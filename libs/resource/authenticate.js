@@ -38,16 +38,33 @@ const extractToken = request => {
  * 与 fastify.account.authenticate 同形的认证中间件：
  * 填充 request.user（统一结构）以及兼容字段 request.userInfo / request.authenticatePayload / request.tenantUserInfo
  */
-module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, serviceClient, translator }) => {
+module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, serviceClient, tenantSync, translator }) => {
   const { runtime } = options;
   const account = () => fastify[options.accountNamespace];
-  const tenant = () => fastify[options.tenantNamespace];
+  const tenant = () => options.getTenant();
+  const independent = runtime.tenantRole === 'independent';
 
   const tenantSource = () => {
     if (options.tenantSource) {
       return options.tenantSource;
     }
-    return runtime.idpEnabled && tenant() ? 'local' : 'claims';
+    if (runtime.tenantRole === 'client') {
+      return 'remote';
+    }
+    return (runtime.idpEnabled || independent) && tenant() ? 'local' : 'claims';
+  };
+
+  // independent：token 里是宿主租户，换成本地托管租户；当前租户交给本地 fastify-tenant 的默认租户决定
+  const resolveIndependentTenant = async normalized => {
+    normalized.hostTenantId = normalized.tenantId;
+    normalized.tenantId = null;
+    if (normalized.hostTenantId) {
+      try {
+        normalized.localTenantId = await tenantSync.ensureFresh(normalized.hostTenantId);
+      } catch (err) {
+        fastify.log.warn({ err, hostTenantId: normalized.hostTenantId }, 'fastify-oidc: 解析宿主租户对应的本地租户失败');
+      }
+    }
   };
 
   const getRequestUrl = request => (options.getRequestUrl ? options.getRequestUrl(request) : `${runtime.origin}${request.raw.url}`);
@@ -114,10 +131,25 @@ module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, se
     if (normalized.isClient) {
       throw createError(Unauthorized, 'userTokenRequired');
     }
+    if (independent) {
+      await resolveIndependentTenant(normalized);
+    }
     request.user = normalized;
     request.authenticatePayload = { id: normalized.userId, tenantId: normalized.tenantId };
     request.userInfo = await resolveUserInfo(normalized.userId);
     request.appName = request.headers['x-app-name'];
+  };
+
+  const getIndependentTenantUser = async currentUser => {
+    const { services } = tenant();
+    try {
+      return await services.user.getTenantUserInfo({ id: currentUser.userId });
+    } catch (e) {
+      if (!currentUser.localTenantId) {
+        throw e;
+      }
+      return services.user.getTenantUserInfo({ id: currentUser.userId, tenantId: currentUser.localTenantId });
+    }
   };
 
   const buildTenantUserFromClaims = currentUser => ({
@@ -141,6 +173,12 @@ module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, se
     }
     if (request.user.legacy && tenant()) {
       await tenant().authenticate.tenantUser(request);
+      return;
+    }
+    if (independent && !options.tenantSource) {
+      const info = await getIndependentTenantUser(request.user);
+      request[contextName] = info;
+      request.user.tenantId = info?.tenantId ? String(info.tenantId) : null;
       return;
     }
     if (!request.user.tenantId) {

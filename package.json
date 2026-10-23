@@ -1,6 +1,6 @@
 {
   "name": "@kne/fastify-oidc",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "基于 oidc-provider 的 Fastify OIDC 认证插件，支持 standalone / central 多项目单点登录、租户与跨项目令牌",
   "main": "index.js",
   "scripts": {
@@ -50,7 +50,8 @@
     "@kne/fastify-account": ">=2.0.8",
     "@kne/fastify-namespace": "*",
     "@kne/fastify-sequelize": "*",
-    "fastify-plugin": ">=5"
+    "fastify-plugin": ">=5",
+    "@kne/fastify-tenant": ">=1.0.0-alpha.55"
   },
   "devDependencies": {
     "@fastify/env": "^5.0.2",
@@ -79,6 +80,9 @@
   },
   "peerDependenciesMeta": {
     "@kne/fastify-account": {
+      "optional": true
+    },
+    "@kne/fastify-tenant": {
       "optional": true
     }
   }

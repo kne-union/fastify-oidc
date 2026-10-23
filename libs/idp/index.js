@@ -2,6 +2,7 @@ const { createLocalJWKSet } = require('jose');
 const createIdentity = require('./identity');
 const createProvider = require('./create-provider');
 const createSequelizeAdapter = require('./adapters/sequelize');
+const { createMemoryStore } = require('../resource/revocation');
 
 /**
  * IdP 运行期：持有当前 oidc-provider 实例，负责初始化、密钥轮换后的热替换和定时清理
@@ -75,6 +76,15 @@ module.exports = ({ fastify, options, translator }) => {
     }
   };
 
+  // 多实例部署时其他实例注册 / 停用的应用靠周期重载同步到本实例的权限树
+  const reloadApps = async () => {
+    try {
+      await getServices().app.reload();
+    } catch (e) {
+      fastify.log.warn({ err: e }, 'fastify-oidc: 重载应用中心失败');
+    }
+  };
+
   const cleanup = async () => {
     try {
       const { models } = fastify[options.name];
@@ -99,11 +109,20 @@ module.exports = ({ fastify, options, translator }) => {
   };
 
   const init = async () => {
-    PayloadAdapter = options.adapter || createSequelizeAdapter({ models: fastify[options.name].models });
+    PayloadAdapter =
+      options.adapter ||
+      createSequelizeAdapter({
+        models: fastify[options.name].models,
+        endedStore: options.revocationStore || createMemoryStore(),
+        sessionTTL: options.ttl.session
+      });
     await getServices().key.ensureKeys();
     await seed();
+    await getServices().app.reload();
+    getServices().tenantPush?.start();
     await build();
     schedule(reloadIfKeysChanged, options.keyReloadInterval);
+    schedule(reloadApps, options.keyReloadInterval);
     schedule(cleanup, options.cleanupInterval);
   };
 

@@ -59,7 +59,7 @@ module.exports = fp(async (fastify, options) => {
       output.user = user && { id: String(user.id), nickname: user.nickname, avatar: user.avatar, email: user.email, phone: user.phone };
     }
     if (prompt.name === 'tenant' && session?.accountId) {
-      output.tenants = await identity.listTenants(session.accountId);
+      output.tenants = await identity.listTenants(session.accountId, services.app.scopeOfClient(params.client_id));
     }
     return output;
   };
@@ -82,7 +82,8 @@ module.exports = fp(async (fastify, options) => {
   const selectTenant = async ({ request, reply, uid, tenantId }) => {
     const { provider, interaction } = await loadInteraction({ request, reply, uid, prompt: 'tenant' });
     const accountId = interaction.session?.accountId;
-    if (!accountId || !(await getIdp().identity.isTenantMember(accountId, tenantId))) {
+    const scope = services.app.scopeOfClient(interaction.params.client_id);
+    if (!accountId || !(await getIdp().identity.isTenantMember(accountId, tenantId, scope))) {
       throw createError(BadRequest, 'tenantNotAvailable');
     }
     return finish({ provider, request, reply, result: { tenant: { tenantId: String(tenantId) } } });

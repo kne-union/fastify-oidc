@@ -166,5 +166,17 @@ describe('@kne/fastify-oidc 单元测试', () => {
       expect((await mirror.ensure('u1')).avatar).to.equal('local-new');
       expect(calls[0].id).to.equal(undefined);
     });
+
+    it('should download again when mirrored record exists but file is gone', async () => {
+      const calls = [];
+      const files = {
+        uploadFromUrl: async params => calls.push(params) && { id: 'local-new' },
+        getFileInstance: async () => ({ options: { oidcAvatarSource: 'idp-1' } }),
+        getFileUrl: async () => Promise.reject(new Error('Not Found'))
+      };
+      const mirror = createMirror({ remote: { nickname: 'a', avatar: 'idp-1', avatarUrl: 'http://idp/file/idp-1' }, files, current: { id: 'u1', avatar: 'local-1' } });
+      expect((await mirror.ensure('u1')).avatar).to.equal('local-new');
+      expect(calls).to.have.length(1);
+    });
   });
 });

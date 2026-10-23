@@ -57,6 +57,22 @@ describe('@kne/fastify-oidc 单元测试', () => {
       expect(() => resolveOptions(Object.assign({}, base, { mode: 'standalone', origin: 'https://a.example.com', issuer: 'https://a.example.com' }))).to.throw('路径');
     });
 
+    it('should derive tenant role from tenant and app options', () => {
+      const central = Object.assign({}, base, { mode: 'central', origin: 'https://b.example.com', issuer: 'https://a.example.com/oidc' });
+      expect(resolveOptions(Object.assign({}, base, { mode: 'standalone', origin: 'https://a.example.com' })).tenantRole).to.equal('none');
+      expect(resolveOptions(Object.assign({}, base, { mode: 'standalone', origin: 'https://a.example.com', tenant: () => ({}) })).tenantRole).to.equal('host');
+      expect(resolveOptions(central).tenantRole).to.equal('none');
+      expect(resolveOptions(Object.assign({}, central, { app: { code: 'crm' } })).tenantRole).to.equal('client');
+      const independent = resolveOptions(Object.assign({}, central, { app: { code: 'erp', tenantMode: 'independent' }, tenant: () => ({}) }));
+      expect(independent.tenantRole).to.equal('independent');
+      expect(independent.app.tenantSyncUri).to.equal('https://b.example.com/api/oidc/tenant-sync');
+
+      expect(() => resolveOptions(Object.assign({}, base, { mode: 'standalone', origin: 'https://a.example.com', app: { code: 'crm' } }))).to.throw('central');
+      expect(() => resolveOptions(Object.assign({}, central, { app: { code: 'a:b' } }))).to.throw('app.code');
+      expect(() => resolveOptions(Object.assign({}, central, { app: { code: 'crm', tenantMode: 'other' } }))).to.throw('tenantMode');
+      expect(() => resolveOptions(Object.assign({}, central, { app: { code: 'erp', tenantMode: 'independent' } }))).to.throw('independent');
+    });
+
     it('should allow custom claim namespace', () => {
       const runtime = resolveOptions(Object.assign({}, base, { mode: 'standalone', origin: 'https://a.example.com', claimNamespace: 'https://kne/' }));
       expect(runtime.claims.roles).to.equal('https://kne/roles');

@@ -66,6 +66,15 @@ describe('@kne/fastify-oidc standalone 模式', function () {
   });
 
   describe('插件注册测试', () => {
+    it('should ignore app defaults without code when running standalone', async () => {
+      const local = await createApp({ oidc: { app: { tenantMode: 'independent' } } });
+      try {
+        expect((await fetch(`${local.origin}/oidc/.well-known/openid-configuration`)).status).to.equal(200);
+      } finally {
+        await local.fastify.close();
+      }
+    });
+
     it('should expose discovery and jwks with active key', async () => {
       expect(as.issuer).to.equal(issuer);
       expect(as.authorization_endpoint).to.equal(`${issuer}/auth`);
@@ -256,6 +265,32 @@ describe('@kne/fastify-oidc standalone 模式', function () {
       expect(confirm.headers.get('location')).to.equal(`${app.origin}/`);
       expect((await getJson(`${app.origin}/api/me`, tokens.access_token)).status).to.equal(401);
 
+      const { onInteraction } = await loginAs({ browser, credentials: { email: 'lisi@test.com', password: 'pwd-2' } });
+      expect(onInteraction.steps[0]).to.equal('login');
+    });
+
+    it('should not resurrect a session saved back by a concurrent request after logout', async () => {
+      const browser = createBrowser();
+      const { tokens } = await loginAs({ browser, credentials: { email: 'lisi@test.com', password: 'pwd-2' } });
+      const adapter = app.fastify.oidc.idp.getAdapter('Session');
+      const [stale] = (await adapter.findByAccountId('1002')).filter(session => session.jti && session.authorizations?.[clientId]?.sid === decodeJwt(tokens.access_token).sid);
+      expect(stale).to.be.an('object');
+      const staleCookies = new Map(browser.cookies);
+
+      const endUrl = new URL(as.end_session_endpoint);
+      endUrl.searchParams.set('id_token_hint', tokens.id_token);
+      const page = await (await browser.request(endUrl.toString())).text();
+      const action = page.match(/action="([^"]+)"/)[1];
+      const xsrf = page.match(/name="xsrf" value="([^"]+)"/)[1];
+      await browser.request(new URL(action, endUrl).toString(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ xsrf, logout: 'yes' }).toString()
+      });
+
+      await adapter.upsert(stale.jti, stale, 3600);
+      expect(await adapter.find(stale.jti)).to.equal(undefined);
+      staleCookies.forEach((value, key) => browser.cookies.set(key, value));
       const { onInteraction } = await loginAs({ browser, credentials: { email: 'lisi@test.com', password: 'pwd-2' } });
       expect(onInteraction.steps[0]).to.equal('login');
     });

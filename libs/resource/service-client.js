@@ -60,21 +60,38 @@ module.exports = ({ options, fetch = globalThis.fetch }) => {
     return data.access_token;
   };
 
-  const callService = async (path, query) => {
-    const token = await getServiceToken();
+  // 每个接口只申请自己需要的 scope：宿主未升级（服务接口资源没有新 scope）时，旧接口仍可用
+  const callService = async (path, { query, method = 'GET', body, scope } = {}) => {
+    const token = await getServiceToken(scope ? { scope } : undefined);
     const url = new URL(`${runtime.idpApiBase}${path}`);
-    Object.entries(query || {}).forEach(([key, value]) => value !== undefined && url.searchParams.set(key, value));
-    const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+    Object.entries(query || {}).forEach(([key, value]) => value !== undefined && value !== null && url.searchParams.set(key, value));
+    const headers = { authorization: `Bearer ${token}` };
+    if (body !== undefined) {
+      headers['content-type'] = 'application/json';
+    }
+    const response = await fetch(url, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      throw createError(null, 'idpServiceCallFailed', { path, status: String(response.status), reason: data?.message || '' });
+      const error = createError(null, 'idpServiceCallFailed', { path, status: String(response.status), reason: data?.message || '' });
+      error.upstreamStatus = response.status;
+      throw error;
     }
     return data && Object.prototype.hasOwnProperty.call(data, 'data') && Object.prototype.hasOwnProperty.call(data, 'code') ? data.data : data;
   };
 
-  const getUserProfile = async userId => callService('/service/user', { id: userId });
+  const appCode = () => runtime.app?.code;
 
-  const getTenantUser = async ({ userId, tenantId }) => callService('/service/tenant-user', { userId, tenantId });
+  const getUserProfile = async userId => callService('/service/user', { query: { id: userId }, scope: 'user:read' });
+
+  const getTenantUser = async ({ userId, tenantId }) => callService('/service/tenant-user', { query: { userId, tenantId, app: appCode() }, scope: 'tenant:read' });
+
+  const getTenantList = async ({ userId }) => callService('/service/tenant-list', { query: { userId, app: appCode() }, scope: 'tenant:read' });
+
+  const registerApp = async body => callService('/service/app/register', { method: 'POST', body, scope: 'app:register' });
+
+  const getTenantSnapshot = async ({ tenantId }) => callService('/service/tenant-snapshot', { query: { tenantId, app: appCode() }, scope: 'tenant:sync' });
+
+  const getTenantMembers = async ({ tenantId, currentPage, perPage }) => callService('/service/tenant-members', { query: { tenantId, app: appCode(), currentPage, perPage }, scope: 'tenant:sync' });
 
   const exchangeToken = async ({ subjectToken, resource, scope }) => {
     assertEnabled();
@@ -87,5 +104,5 @@ module.exports = ({ options, fetch = globalThis.fetch }) => {
     });
   };
 
-  return { enabled, getServiceToken, getUserProfile, getTenantUser, exchangeToken };
+  return { enabled, getServiceToken, callService, getUserProfile, getTenantUser, getTenantList, registerApp, getTenantSnapshot, getTenantMembers, exchangeToken };
 };

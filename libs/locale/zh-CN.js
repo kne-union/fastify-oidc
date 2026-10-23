@@ -59,5 +59,13 @@ module.exports = {
   subjectTokenAccountInvalid: 'subject_token 对应的用户不存在或已被禁用',
   logoutPageTitle: '退出登录',
   logoutConfirm: '确认退出',
-  logoutSuccess: '已退出登录'
+  logoutSuccess: '已退出登录',
+  appNotFound: '子应用不存在',
+  appCodeInvalid: '应用 code 只能包含字母、数字、下划线和中划线',
+  appTenantModeInvalid: 'tenantMode 只能是 client 或 independent',
+  appCodeTaken: '应用 {code} 已由其他 client 注册',
+  appClientMismatch: '当前 client 无权访问应用 {code} 的数据',
+  appNotEnabled: '租户未开通该应用或应用已停用',
+  tenantSyncTokenInvalid: 'tenant_sync_token 无效或已过期',
+  tenantSyncTokenReplayed: 'tenant_sync_token 已被使用'
 };

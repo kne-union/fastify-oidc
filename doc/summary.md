@@ -49,7 +49,7 @@
 | 资源 | identifier | scope | 用途 |
 |------|------------|-------|------|
 | 本项目 API（名称为 `name`） | `${ORIGIN}/api` | `api` | SPA 调用本项目接口 |
-| 服务接口 | `${issuer origin}${prefix}` | `user:read tenant:read` | 子项目以 client_credentials 读取用户 / 租户 |
+| 服务接口 | `${issuer origin}${prefix}` | `user:read tenant:read app:register tenant:sync` | 子项目以 client_credentials 读取用户 / 租户、注册应用、回拉租户快照 |
 
 client 只能申请 `allowedResources` 中的资源；子项目 token 的 `aud` 是子项目 API，拿到主项目会被拒绝。
 
@@ -88,6 +88,7 @@ JWT access_token 无法真正撤销，插件在资源侧维护一个撤销列表
 | JWT access_token | RS256 签名，`typ: at+jwt`，按资源服务区分 `aud` |
 | Refresh Token 轮转 | 每次刷新签发新 refresh token，旧的立即失效 |
 | 多租户 | 交互式 / 自动 / 静默切换租户，租户信息写入 token |
+| 应用中心 | 子应用把权限树注册到宿主「应用中心」节点，宿主按租户开关子应用及其功能；client / independent 两种租户模式 |
 | SSO | 多个项目共用主项目 IdP 会话 |
 | RP-Initiated Logout / Back-Channel Logout | 登出时通知所有子项目 |
 | DPoP | 前端可选启用，token 与浏览器密钥绑定，资源侧校验 proof 与重放 |
@@ -185,6 +186,50 @@ fastify.register(require('@kne/fastify-oidc'), {
 ```
 
 > **建议**：子项目 client 配置 `backchannel_logout_session_required: true`，登出通知会携带 `sid`，子项目只撤销该会话的 token；否则按用户撤销。
+
+#### 子应用与应用中心
+
+宿主显式传入 fastify-tenant 开启应用中心：
+
+```js
+// 宿主（standalone）
+fastify.register(require('@kne/fastify-oidc'), {
+  tenant: () => fastify.tenant
+});
+```
+
+子应用以 central 模式接入，并声明 `app`。宿主登记的服务 client 需要 `allowedResources` 包含服务接口资源；client 模式开启 `tenantProxy` 时还需 token exchange 与宿主 API 资源：
+
+```js
+// client 模式：租户相关接口与数据全部由宿主提供
+fastify.register(require('@kne/fastify-oidc'), {
+  mode: 'central',
+  tenantProxy: true, // 可选：/api/tenant/* 由宿主提供
+  app: {
+    code: 'crm',
+    name: 'CRM',
+    tenantMode: 'client',
+    permissions: { modules: [{ code: 'order', name: '订单', permissions: [{ code: 'view', name: '查看' }] }] }
+  }
+});
+
+// independent 模式：本地 fastify-tenant，宿主同步过来的租户由宿主接管
+fastify.register(require('@kne/fastify-tenant'), { getUserAuthenticate: () => fastify.oidc.authenticate.user });
+fastify.register(require('@kne/fastify-oidc'), {
+  mode: 'central',
+  tenant: () => fastify.tenant,
+  app: { code: 'erp', name: 'ERP', tenantMode: 'independent' } // 权限树默认取 fastify.tenant.permissions
+});
+```
+
+| 模式 | 租户来源 | 权限 | 说明 |
+|------|----------|------|------|
+| client | 宿主（`tenantSource = remote`） | 宿主下发，已去 `apps:<code>:` 前缀 | 只能选择已开通本应用的租户 |
+| independent | 本地 fastify-tenant | 本地计算 | 宿主同步的租户（托管租户）只读；本地自建租户不受影响 |
+
+> **注意**：托管租户名与本地租户重名时追加 `（宿主）` 后缀（仍冲突依次为 `（宿主2）`……）；组织架构完全以宿主为准，子应用不能在托管租户下补充部门。independent 模式依赖 fastify-tenant 的托管租户能力（`services.managed`），需同时升级 fastify-tenant。
+
+> **注意**：应用中心停用或删除某应用后，该应用的 client 登录不带任何租户与权限；independent 应用的托管租户会收到推送并关闭，宿主删除租户时同样关闭。删除的应用在子应用重启重新注册后恢复。宿主拒绝注册（如编码已被占用）时子应用停止重试，需修正配置后重启。
 
 #### 前端
 

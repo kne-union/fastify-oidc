@@ -68,21 +68,23 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
     const sessionUid = oidc.session.uid;
     const requested = oidc.params.tenant_id ? String(oidc.params.tenant_id) : null;
     const chosen = oidc.result?.tenant?.tenantId ? String(oidc.result.tenant.tenantId) : null;
+    // 子应用的 client 只考虑已开通该应用的租户
+    const scope = services.app.scopeOfClient(oidc.client.clientId);
     const select = async tenantId => {
       await services.sessionTenant.set({ sessionUid, accountId, tenantId });
       return interactionPolicy.Check.NO_NEED_TO_PROMPT;
     };
 
-    if (chosen && (await identity.isTenantMember(accountId, chosen))) {
+    if (chosen && (await identity.isTenantMember(accountId, chosen, scope))) {
       return select(chosen);
     }
     const current = await services.sessionTenant.get({ sessionUid });
-    const currentTenantId = current && current.accountId === String(accountId) && (await identity.isTenantMember(accountId, current.tenantId)) ? current.tenantId : null;
+    const currentTenantId = current && current.accountId === String(accountId) && (await identity.isTenantMember(accountId, current.tenantId, scope)) ? current.tenantId : null;
     if (requested) {
       if (requested === currentTenantId) {
         return interactionPolicy.Check.NO_NEED_TO_PROMPT;
       }
-      if (await identity.isTenantMember(accountId, requested)) {
+      if (await identity.isTenantMember(accountId, requested, scope)) {
         return select(requested);
       }
       return interactionPolicy.Check.REQUEST_PROMPT;
@@ -90,7 +92,7 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
     if (currentTenantId) {
       return interactionPolicy.Check.NO_NEED_TO_PROMPT;
     }
-    const { list } = await identity.listTenants(accountId);
+    const { list } = await identity.listTenants(accountId, scope);
     if (list.length === 0) {
       return interactionPolicy.Check.NO_NEED_TO_PROMPT;
     }
@@ -207,7 +209,8 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
       if (!tenantId && token.sessionUid) {
         tenantId = (await services.sessionTenant.get({ sessionUid: token.sessionUid }))?.tenantId;
       }
-      const tenantContext = await identity.getTenantContext({ accountId, tenantId });
+      // 资源属于子应用时：租户未开通该应用则不带租户 claims，权限只下发该应用的并去掉 apps:<code>: 前缀
+      const tenantContext = await identity.getTenantContext(Object.assign({ accountId, tenantId }, services.app.scopeOfResource(token.resourceServer?.identifier())));
       if (tenantContext) {
         extra[claims.tenantId] = tenantContext.tenantId;
         extra[claims.tenantUserId] = tenantContext.tenantUserId;

@@ -59,5 +59,13 @@ module.exports = {
   subjectTokenAccountInvalid: 'The user of subject_token does not exist or is disabled',
   logoutPageTitle: 'Log out',
   logoutConfirm: 'Confirm log out',
-  logoutSuccess: 'You have been logged out'
+  logoutSuccess: 'You have been logged out',
+  appNotFound: 'App does not exist',
+  appCodeInvalid: 'App code may only contain letters, digits, underscores and hyphens',
+  appTenantModeInvalid: 'tenantMode must be client or independent',
+  appCodeTaken: 'App {code} has been registered by another client',
+  appClientMismatch: 'The current client cannot access data of app {code}',
+  appNotEnabled: 'The tenant has not enabled this app or the app is disabled',
+  tenantSyncTokenInvalid: 'tenant_sync_token is invalid or expired',
+  tenantSyncTokenReplayed: 'tenant_sync_token has already been used'
 };

@@ -1,5 +1,6 @@
 const { jwtVerify, createRemoteJWKSet } = require('jose');
 const { createError } = require('../utils/intl');
+const { TENANT_SYNC_EVENT } = require('../utils/app-permissions');
 
 const LOGOUT_EVENT = 'http://schemas.openid.net/event/backchannel-logout';
 
@@ -47,5 +48,19 @@ module.exports = ({ options, getLocalJWKS }) => {
     return payload;
   };
 
-  return { verifyAccessToken, verifyLogoutToken };
+  const verifyTenantSyncToken = async (token, { audience }) => {
+    const { payload } = await jwtVerify(token, getJWKS(), {
+      issuer: runtime.issuer,
+      audience,
+      typ: 'tenant-sync+jwt',
+      clockTolerance: options.clockTolerance,
+      requiredClaims: ['jti', 'exp', 'tenant_id']
+    });
+    if (!payload.events || typeof payload.events[TENANT_SYNC_EVENT] !== 'object') {
+      throw createError(null, 'tenantSyncTokenInvalid');
+    }
+    return payload;
+  };
+
+  return { verifyAccessToken, verifyLogoutToken, verifyTenantSyncToken };
 };

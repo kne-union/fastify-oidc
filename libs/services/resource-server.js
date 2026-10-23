@@ -86,12 +86,23 @@ module.exports = fp(async (fastify, options) => {
     return rows.map(row => row.identifier);
   };
 
+  // 已存在的资源服务只追加配置中新增的 scope（如升级后服务接口新增 scope），不覆盖管理端维护的其他字段
   const seed = async resourceServers => {
     for (const item of resourceServers || []) {
-      if (await models.resourceServer.count({ where: { identifier: item.identifier } })) {
+      const existing = await models.resourceServer.findOne({ where: { identifier: item.identifier } });
+      if (!existing) {
+        await create(item);
         continue;
       }
-      await create(item);
+      const current = String(existing.scope || '')
+        .split(' ')
+        .filter(Boolean);
+      const missing = String(item.scope || '')
+        .split(' ')
+        .filter(scope => scope && !current.includes(scope));
+      if (missing.length) {
+        await existing.update({ scope: [...current, ...missing].join(' ') });
+      }
     }
   };
 

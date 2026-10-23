@@ -96,6 +96,36 @@ module.exports = fp(async (fastify, options) => {
   crud('client', 'OIDC Client', () => services.client, clientBody);
   crud('resource-server', 'OIDC 资源服务', () => services.resourceServer, resourceServerBody);
 
+  // 应用由子应用通过服务接口注册，管理端只能查看、启停与删除
+  const appTags = ['OIDC 应用中心'];
+  const appOnRequest = options.getAuthenticate('app:manage');
+  fastify.get(
+    `${admin}/app/list`,
+    { onRequest: appOnRequest, schema: { tags: appTags, summary: '子应用列表', query: listQuery } },
+    wrap(async request => services.app.list(request.query))
+  );
+  fastify.get(
+    `${admin}/app/detail`,
+    { onRequest: appOnRequest, schema: { tags: appTags, summary: '子应用详情（含权限树）', query: idSchema } },
+    wrap(async request => services.app.detail(request.query))
+  );
+  fastify.post(
+    `${admin}/app/set-status`,
+    { onRequest: appOnRequest, schema: { tags: appTags, summary: '启用 / 停用子应用（停用后从权限树移除）', body: statusBody } },
+    wrap(async request => {
+      await services.app.setStatus(request.body);
+      return {};
+    })
+  );
+  fastify.post(
+    `${admin}/app/remove`,
+    { onRequest: appOnRequest, schema: { tags: appTags, summary: '删除子应用（子应用下次启动会重新注册）', body: idSchema } },
+    wrap(async request => {
+      await services.app.remove(request.body);
+      return {};
+    })
+  );
+
   fastify.post(
     `${admin}/client/rotate-secret`,
     { onRequest: options.getAuthenticate('client:manage'), schema: { tags: ['OIDC Client'], summary: '重置 client secret（明文只返回一次）', body: idSchema } },

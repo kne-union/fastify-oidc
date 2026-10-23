@@ -6,6 +6,6 @@ jobs:
   test:
     uses: kne-union/actions/.github/workflows/node-test.yml@master
     with:
-      node-versions: '["22"]'
+      node-versions: '["22","24","26"]'
       install-command: npm install
       test-command: npm test

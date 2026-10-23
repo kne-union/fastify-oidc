@@ -81,6 +81,8 @@ client 只能申请 `allowedResources` 中的资源；子项目 token 的 `aud` 
 | 只属于一个租户 | 自动选中 |
 | 多个租户 | 前端展示租户列表 |
 | 授权请求带 `tenant_id` 且用户是成员 | 静默切换（可配合 `prompt=none`） |
+| 授权请求带的 `tenant_id` 无效，用户只有一个可用租户 | 自动选中该租户，不展示列表 |
+| 授权请求带的 `tenant_id` 无效，用户有多个可用租户 | 前端展示租户列表（`prompt=none` 时返回 `interaction_required`） |
 | 会话中的租户已不再有效（被移出、关闭） | 重新判断上面几种情况 |
 
 token 中的租户相关 claim 以命名空间为前缀（默认 `${ORIGIN}/`，central 模式为 issuer 的 origin）：`tenant_id`、`tenant_user_id`、`roles`、`permissions`（按资源服务 `includePermissions` 决定是否携带）。

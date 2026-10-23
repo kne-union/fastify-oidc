@@ -87,6 +87,11 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
       if (await identity.isTenantMember(accountId, requested, scope)) {
         return select(requested);
       }
+      // 请求的租户无效（如子应用误传本地租户 id）但只有一个可用租户时直接进入，没得选就不弹选择页
+      const { list } = await identity.listTenants(accountId, scope);
+      if (list.length === 1) {
+        return select(list[0].tenantId);
+      }
       return interactionPolicy.Check.REQUEST_PROMPT;
     }
     if (currentTenantId) {

@@ -192,6 +192,16 @@ describe('@kne/fastify-oidc 安全与管理', function () {
       expect(decodeJwt(tokens.access_token)[`${app.origin}/tenant_id`]).to.equal('tenant-b');
     });
 
+    it('should enter the only tenant when requested tenant is invalid', async () => {
+      const fresh = await loginAs({ credentials: LISI, extra: { tenant_id: 'tenant-x' } });
+      expect(fresh.onInteraction.steps).to.deep.equal(['login']);
+      expect(decodeJwt(fresh.tokens.access_token)[`${app.origin}/tenant_id`]).to.equal('tenant-a');
+
+      const { tokens, onInteraction } = await loginAs({ browser: fresh.browser, extra: { prompt: 'none', tenant_id: 'tenant-x' } });
+      expect(onInteraction.steps).to.deep.equal([]);
+      expect(decodeJwt(tokens.access_token)[`${app.origin}/tenant_id`]).to.equal('tenant-a');
+    });
+
     it('should keep current tenant when requested tenant equals current', async () => {
       const { browser } = await loginAs({ credentials: ZHANGSAN, tenantId: 'tenant-b' });
       const { tokens, onInteraction } = await loginAs({ browser, extra: { prompt: 'none', tenant_id: 'tenant-b' } });

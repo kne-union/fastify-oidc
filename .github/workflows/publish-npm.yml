@@ -12,6 +12,6 @@ jobs:
     with:
       package_name: '@kne/fastify-oidc'
       run_test: true
-      node-versions: '["22"]'
+      node-versions: '["22","24","26"]'
       install-command: npm install
       test-command: npm test

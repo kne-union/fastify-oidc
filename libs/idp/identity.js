@@ -121,6 +121,19 @@ module.exports = ({ fastify, options }) => {
     return list.some(item => item.tenantId === String(tenantId));
   };
 
+  // 租户 MFA 配置来自 fastify-tenant 的 services.setting.getMfa；未启用租户或旧版本 fastify-tenant 没有该方法时视为未开启
+  const getTenantMfa = async tenantId => {
+    const getMfa = tenantEnabled() && tenantId ? tenant().services.setting?.getMfa : null;
+    if (typeof getMfa !== 'function') {
+      return { enabled: false };
+    }
+    const mfa = (await getMfa({ tenantId })) || {};
+    if (!mfa.enabled) {
+      return { enabled: false };
+    }
+    return { enabled: true, methods: mfa.methods?.length ? mfa.methods : ['sms'], maxAge: Math.max(Number(mfa.maxAge) || 0, 0) };
+  };
+
   const getTenantUserInfo = async ({ accountId, tenantId, appCode }) => {
     const info = plain(await tenant().services.user.getTenantUserInfo({ id: accountId, tenantId }));
     if (!appCode) {
@@ -241,6 +254,7 @@ module.exports = ({ fastify, options }) => {
     verifyCredentials,
     listTenants,
     isTenantMember,
+    getTenantMfa,
     getTenantUserInfo,
     getTenantContext,
     isAppEnabled,

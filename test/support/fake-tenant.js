@@ -20,8 +20,9 @@ const mergeModules = (target, modules = []) => {
  * memberships: { [userId]: [{ id, tenantId, name, roles: [code], permissions: [code], orgIds: [orgId] }] }
  * tenantPermissions: { [tenantId]: [code] }，roles: { [tenantId]: [{ id, code, name, permissions }] }，orgs: { [tenantId]: [{ id, parentId, name, leaderUserId }] }
  * profiles: { [tenantId]: { logo, company } } 覆盖 tenant.detail 的返回
+ * mfa: { [tenantId]: { enabled, methods, maxAge } } 作为 services.setting.getMfa 的返回
  */
-module.exports = fp(async (fastify, { memberships = {}, tenantPermissions = {}, roles = {}, orgs = {}, profiles = {}, permissions = { modules: [] } } = {}) => {
+module.exports = fp(async (fastify, { memberships = {}, tenantPermissions = {}, roles = {}, orgs = {}, profiles = {}, permissions = { modules: [] }, mfa = {} } = {}) => {
   const listOf = userId => memberships[String(userId)] || [];
   const sources = new Map();
   const listeners = new Set();
@@ -69,7 +70,11 @@ module.exports = fp(async (fastify, { memberships = {}, tenantPermissions = {}, 
         }
       }
     },
+    mfa,
     services: {
+      setting: {
+        getMfa: async ({ tenantId }) => Object.assign({ enabled: false, methods: ['sms'], maxAge: 86400 }, mfa[tenantId])
+      },
       tenant: {
         detail: async ({ id }) => Object.assign({ id, name: tenantName(id), status: 'open', company: { name: `${tenantName(id)} 公司` } }, profiles[id])
       },

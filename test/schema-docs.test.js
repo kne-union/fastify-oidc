@@ -56,7 +56,7 @@ describe('@kne/fastify-oidc 接口文档', function () {
       checkProps(`${name} params`, schema.params);
     });
     const urls = new Set([...routes.values()].filter(route => !NON_JSON_ROUTES.includes(route.url)).map(route => `${route.method} ${route.url}`));
-    expect(urls.size).to.equal(39);
+    expect(urls.size).to.equal(41);
     expect(missing).to.deep.equal([]);
   });
 });

@@ -85,6 +85,7 @@ module.exports = fp(
       options
     );
     options.ttl = Object.assign({ accessToken: 10 * 60, idToken: 60 * 60, refreshToken: 14 * DAY, interaction: 10 * 60, session: 14 * DAY, grant: 14 * DAY }, options.ttl);
+    options.mfa = Object.assign({ codeTTL: 5 * 60, maxAttempts: 5, resendInterval: 60, smsType: 6 }, options.mfa);
     options.serviceClient = Object.assign({ clientId: env.OIDC_SERVICE_CLIENT_ID, clientSecret: env.OIDC_SERVICE_CLIENT_SECRET }, options.serviceClient);
     // 代码里的 app 作默认值（如 tenantMode），部署时宿主注入的环境变量优先；最终没有 code 视为未作为子应用部署
     const envApp = pickBy({ code: env.OIDC_APP_CODE, name: env.OIDC_APP_NAME, tenantMode: env.OIDC_APP_TENANT_MODE, tenantSyncUri: env.OIDC_APP_TENANT_SYNC_URI });

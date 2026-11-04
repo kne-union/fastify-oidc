@@ -53,7 +53,7 @@ npm i --save @kne/fastify-oidc
 | 环节 | 实现 | 说明 |
 |------|------|------|
 | 协议端点 | `libs/idp/mount.js` | 把 `mountPath`（默认 `/oidc`）下的请求原样交给 oidc-provider |
-| 交互 | `libs/services/interaction.js` | 登录、选择租户、授权确认、取消，返回 `{ redirectTo }` 由前端跳转 |
+| 交互 | `libs/services/interaction.js` | 登录、选择租户、短信 MFA、授权确认、取消，返回 `{ redirectTo }` 由前端跳转 |
 | 账号 / 租户桥接 | `libs/idp/identity.js` | 唯一依赖 fastify-account / fastify-tenant 的地方 |
 | 资源侧鉴权 | `libs/resource/*` | JWT 验签、DPoP、撤销列表、`request.user` 归一化、legacy token 回退 |
 | 管理 | `libs/controllers/admin.js` | client、资源服务、签名密钥、会话 |
@@ -86,6 +86,21 @@ client 只能申请 `allowedResources` 中的资源；子项目 token 的 `aud` 
 | 会话中的租户已不再有效（被移出、关闭） | 重新判断上面几种情况 |
 
 token 中的租户相关 claim 以命名空间为前缀（默认 `${ORIGIN}/`，central 模式为 issuer 的 origin）：`tenant_id`、`tenant_user_id`、`roles`、`permissions`（按资源服务 `includePermissions` 决定是否携带）。
+
+##### 租户短信 MFA
+
+租户在 fastify-tenant 的 MFA 设置（`/api/tenant/mfa-setting`）中开启后，`tenant` 之后会出现 `mfa` 步骤，前端调用 `mfa/send` 发码、`mfa/verify` 校验：
+
+| 情况 | 行为 |
+|------|------|
+| 租户未开启 MFA，或宿主 fastify-tenant 版本没有 MFA 设置 | 跳过 |
+| 本会话距上次 MFA 验证未超过租户的 `maxAge`（秒） | 跳过（同一会话切到另一个开启 MFA 的租户时，按该租户的 `maxAge` 判断） |
+| 超过 `maxAge` 或从未验证 | 前端展示短信验证（`prompt=none` 时返回 `interaction_required`） |
+| 账号没有手机号 | `mfa/send` 以 `access_denied` 结束授权，需管理员先给账号绑定手机号 |
+
+- 验证码通过 fastify-account 的 `sendVerificationCode` 发送（`type` 默认 `6`），宿主的 `sendMessage` 必须处理该类型的短信，否则验证码发不出去
+- 验证码绑定交互、只能使用一次，错误 5 次锁定，60 秒内不能重发（可通过 `mfa` 选项调整）
+- 通过后 id_token 的 `amr` 为 `['pwd', 'sms', 'mfa']`，RP 可据此判断；已签发的 refresh_token 不受之后开启的 MFA 影响
 
 ##### 令牌撤销
 
@@ -362,6 +377,15 @@ oidc-provider 9.x 为 ESM 包，本插件通过动态 `import()` 加载，要求
 
 `getAuthenticate` 默认：`*:manage` 返回 `[authenticate.user, authenticate.admin]`，其余返回 `[authenticate.user]`。
 
+`mfa` 默认值（租户短信 MFA，是否开启与有效期由 fastify-tenant 的租户 MFA 设置决定，见「租户短信 MFA」）：
+
+| 键 | 默认值 | 说明 |
+|----|--------|------|
+| codeTTL | `300` | 验证码有效期（秒） |
+| maxAttempts | `5` | 同一验证码最多错误次数，达到后锁定，需重新发送 |
+| resendInterval | `60` | 重新发送的最小间隔（秒） |
+| smsType | `6` | 调用 fastify-account `sendVerificationCode` 时的 `type`，宿主的 `sendMessage` 需处理该类型的短信 |
+
 ##### 资源侧
 
 | 属性名 | 类型 | 必填 | 默认值 | 说明 |
@@ -463,7 +487,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 }
 ```
 
-`prompt.name` 为 `login` / `tenant` / `consent`；已登录时 `user` 为 `{ id, nickname, avatar, email, phone }`；`tenant` 步骤时 `tenants` 为 `{ list: [{ tenantId, tenantUserId, name, logo, companyName }], defaultTenantId }`。
+`prompt.name` 为 `login` / `tenant` / `mfa` / `consent`；已登录时 `user` 为 `{ id, nickname, avatar, email, phone }`；`tenant` 步骤时 `tenants` 为 `{ list: [{ tenantId, tenantUserId, name, logo, companyName }], defaultTenantId }`；`mfa` 步骤时 `mfa` 为 `{ method: 'sms', tenantId, maxAge, phoneMissing, phoneMasked, resendAfter }`。
 
 ###### POST /api/oidc/interaction/{uid}/login
 
@@ -479,6 +503,14 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 ###### POST /api/oidc/interaction/{uid}/tenant
 
 参数 `tenantId`（必填）。只能选择当前用户所属且开启的租户。
+
+###### POST /api/oidc/interaction/{uid}/mfa/send
+
+`mfa` 步骤发送短信验证码到账号绑定的手机号，返回 `{ phoneMasked, expiresIn, resendAfter }`；发送间隔内重复调用返回 400。账号没有手机号时以 `access_denied` 结束交互，返回 `{ redirectTo }`。
+
+###### POST /api/oidc/interaction/{uid}/mfa/verify
+
+参数 `code`（必填）。验证码错误、过期或错误次数过多返回 400；通过后返回 `{ redirectTo }`，本次登录的 id_token `amr` 为 `['pwd', 'sms', 'mfa']`，`auth_time` 保持原登录时间。
 
 ###### POST /api/oidc/interaction/{uid}/confirm
 
@@ -711,6 +743,29 @@ central 模式下主项目的 `avatar` 是主项目文件库的 id，子项目�
 | sessionUid | string | IdP 会话 uid（唯一） |
 | accountId | string | 用户 id |
 | tenantId | string | 会话当前租户 |
+
+##### sessionMfa（`t_oidc_session_mfa`）
+
+| 属性名 | 类型 | 说明 |
+|--------|------|------|
+| sessionUid | string | IdP 会话 uid（唯一） |
+| accountId | string | 用户 id |
+| method | string | 验证方式，如 `sms` |
+| verifiedAt | Date | 本会话最近一次通过 MFA 的时间 |
+
+##### mfaChallenge（`t_oidc_mfa_challenge`）
+
+| 属性名 | 类型 | 说明 |
+|--------|------|------|
+| interactionUid | string | 交互 uid（唯一），验证码只在该次交互内有效 |
+| accountId | string | 用户 id |
+| method | string | 验证方式 |
+| codeHash | string | 验证码 HMAC，不存明文 |
+| attempts | number | 已错误次数 |
+| status | string | `pending` 待验证 / `verified` 已使用 / `locked` 错误次数过多 |
+| sentAt / expiresAt | Date | 最近发送时间 / 过期时间 |
+
+新表由 `sequelize.sync()` 创建，无需迁移脚本。
 
 ##### app（`t_oidc_app`）
 

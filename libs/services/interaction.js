@@ -61,6 +61,18 @@ module.exports = fp(async (fastify, options) => {
     if (prompt.name === 'tenant' && session?.accountId) {
       output.tenants = await identity.listTenants(session.accountId, services.app.scopeOfClient(params.client_id));
     }
+    if (prompt.name === 'mfa' && session?.accountId) {
+      const current = await services.sessionTenant.get({ sessionUid: session.uid });
+      const mfa = current ? await identity.getTenantMfa(current.tenantId) : { enabled: false };
+      output.mfa = {
+        method: 'sms',
+        tenantId: current?.tenantId || null,
+        maxAge: mfa.maxAge ?? null,
+        phoneMissing: !output.user?.phone,
+        phoneMasked: output.user?.phone ? services.mfa.maskPhone(output.user.phone) : null,
+        resendAfter: await services.mfa.getChallengeState({ interactionUid: interaction.uid })
+      };
+    }
     return output;
   };
 
@@ -89,6 +101,35 @@ module.exports = fp(async (fastify, options) => {
     return finish({ provider, request, reply, result: { tenant: { tenantId: String(tenantId) } } });
   };
 
+  // 租户开启 MFA 但账号没有手机号：直接以 access_denied 结束交互
+  const mfaSend = async ({ request, reply, uid }) => {
+    const { provider, interaction } = await loadInteraction({ request, reply, uid, prompt: 'mfa' });
+    const accountId = interaction.session?.accountId;
+    const user = accountId && (await getIdp().identity.getUser(accountId));
+    if (!user?.phone) {
+      return finish({
+        provider,
+        request,
+        reply,
+        result: { error: 'access_denied', error_description: await translator.t(request, 'mfaPhoneRequired') },
+        merge: false
+      });
+    }
+    return services.mfa.sendCode({ interactionUid: interaction.uid, accountId, phone: user.phone });
+  };
+
+  const mfaVerify = async ({ request, reply, uid, code }) => {
+    const { provider, interaction } = await loadInteraction({ request, reply, uid, prompt: 'mfa' });
+    const { session } = interaction;
+    const { method } = await services.mfa.verifyCode({ interactionUid: interaction.uid, accountId: session.accountId, code });
+    await services.mfa.markSession({ sessionUid: session.uid, accountId: session.accountId, method });
+    // 重新提交 login 以把 amr 写进会话（id_token 的 amr），沿用原登录时间保持 auth_time 不变
+    const current = await provider.Session.findByUid(session.uid);
+    const amr = [...new Set([...(current?.amr || session.amr || ['pwd']), method, 'mfa'])];
+    const login = Object.assign({ accountId: session.accountId, amr, remember: !current?.transient }, current?.loginTs ? { ts: current.loginTs } : {}, current?.acr ? { acr: current.acr } : {});
+    return finish({ provider, request, reply, result: { login, mfa: { accountId: session.accountId, method } } });
+  };
+
   const confirm = async ({ request, reply, uid }) => {
     const { provider, interaction } = await loadInteraction({ request, reply, uid, prompt: 'consent' });
     const { params, session, prompt } = interaction;
@@ -115,5 +156,5 @@ module.exports = fp(async (fastify, options) => {
     });
   };
 
-  services.interaction = { details, login, selectTenant, confirm, abort };
+  services.interaction = { details, login, selectTenant, mfaSend, mfaVerify, confirm, abort };
 });

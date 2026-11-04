@@ -93,6 +93,7 @@ module.exports = ({ fastify, options, translator }) => {
         await models.payload.destroy({ where: { expiresAt: { [Op.lt]: new Date() } } });
       }
       await models.sessionTenant.destroy({ where: { updatedAt: { [Op.lt]: new Date(Date.now() - options.ttl.session * 1000) } } });
+      await getServices().mfa.cleanup({ olderThan: new Date(Date.now() - options.ttl.session * 1000) });
       await getServices().key.pruneRetired();
     } catch (e) {
       fastify.log.warn({ err: e }, 'fastify-oidc: 定时清理失败');

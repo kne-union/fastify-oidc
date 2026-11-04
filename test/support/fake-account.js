@@ -71,9 +71,18 @@ module.exports = fp(
       request.userInfo = await getUser(request.authenticatePayload);
     };
 
+    // 发出的验证码记录在 sentCodes，供测试读取
+    const sentCodes = [];
+    const sendVerificationCode = async ({ name, type, options }) => {
+      const code = String(100000 + sentCodes.length);
+      sentCodes.push({ name, type, code, options });
+      return code;
+    };
+
     fastify.decorate('account', {
       models,
-      services: { user: { getUser }, account: { verifyCredentials }, admin: { checkIsSuperAdmin } },
+      sentCodes,
+      services: { user: { getUser }, account: { verifyCredentials, sendVerificationCode }, admin: { checkIsSuperAdmin } },
       authenticate: {
         user: async request => (getUserAuthenticate ? getUserAuthenticate()(request) : tokenUser(request)),
         tokenUser,

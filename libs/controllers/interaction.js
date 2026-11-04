@@ -39,7 +39,7 @@ module.exports = fp(async (fastify, options) => {
           properties: {
             uid: str('交互 uid'),
             prompt: obj('当前步骤', {
-              name: str('步骤：login 登录，tenant 选择租户，consent 确认授权'),
+              name: str('步骤：login 登录，tenant 选择租户，mfa 多因素认证（短信），consent 确认授权'),
               reasons: any('需要该步骤的原因'),
               details: any('步骤详情（如缺少的 scope）')
             }),
@@ -64,7 +64,15 @@ module.exports = fp(async (fastify, options) => {
               email: str('邮箱'),
               phone: str('手机号')
             }),
-            tenants: obj('可选租户（仅 tenant 步骤返回，否则为 null）：{ list, defaultTenantId }')
+            tenants: obj('可选租户（仅 tenant 步骤返回，否则为 null）：{ list, defaultTenantId }'),
+            mfa: obj('多因素认证信息（仅 mfa 步骤返回）', {
+              method: str('验证方式，目前固定为 sms'),
+              tenantId: str('要求验证的租户 ID'),
+              maxAge: any('租户配置的 MFA 有效期（秒）'),
+              phoneMissing: any('账号没有手机号时为 true，此时无法完成验证，调用 mfa/send 会以 access_denied 结束交互'),
+              phoneMasked: str('脱敏手机号'),
+              resendAfter: any('距离可以重新发送验证码的秒数，0 表示可以发送')
+            })
           }
         })
       }
@@ -119,6 +127,43 @@ module.exports = fp(async (fastify, options) => {
       }
     },
     wrap(async (request, reply) => services.interaction.selectTenant({ request, reply, uid: request.params.uid, tenantId: request.body.tenantId }))
+  );
+
+  fastify.post(
+    `${base}/mfa/send`,
+    {
+      schema: {
+        tags,
+        summary: '发送 MFA 短信验证码',
+        description: `仅 mfa 步骤可调用，${HINT}。验证码发到账号绑定的手机号，只在本次交互内有效；发送间隔内重复调用返回 400。账号没有手机号时以 access_denied 结束交互并返回 redirectTo`,
+        params,
+        response: success('发送结果', {
+          type: 'object',
+          properties: {
+            phoneMasked: str('脱敏手机号'),
+            expiresIn: any('验证码有效期（秒）'),
+            resendAfter: any('距离可以重新发送的秒数'),
+            redirectTo: str('账号没有手机号、交互已结束时前端需要跳转的地址')
+          }
+        })
+      }
+    },
+    wrap(async (request, reply) => services.interaction.mfaSend({ request, reply, uid: request.params.uid }))
+  );
+
+  fastify.post(
+    `${base}/mfa/verify`,
+    {
+      schema: {
+        tags,
+        summary: '校验 MFA 短信验证码',
+        description: `仅 mfa 步骤可调用，${HINT}。验证码错误、过期或错误次数过多返回 400，错误次数过多后需重新发送；通过后返回 redirectTo，id_token 的 amr 会包含 sms、mfa`,
+        params,
+        body: { type: 'object', required: ['code'], properties: { code: { type: 'string', description: '短信验证码' } } },
+        response: redirect('验证通过')
+      }
+    },
+    wrap(async (request, reply) => services.interaction.mfaVerify({ request, reply, uid: request.params.uid, code: request.body.code }))
   );
 
   fastify.post(

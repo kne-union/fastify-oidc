@@ -107,8 +107,36 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
     return interactionPolicy.Check.REQUEST_PROMPT;
   });
 
+  // 在 tenant 之后执行：tenantCheck 已把本次选定的租户写入 sessionTenant
+  const mfaCheck = new interactionPolicy.Check('mfa_required', '需要多因素认证', async ctx => {
+    const { oidc } = ctx;
+    const accountId = oidc.session.accountId;
+    if (!accountId || !identity.tenantEnabled()) {
+      return interactionPolicy.Check.NO_NEED_TO_PROMPT;
+    }
+    // 本次授权刚完成验证（maxAge 为 0 时也不会重复要求）
+    if (oidc.result?.mfa && String(oidc.result.mfa.accountId) === String(accountId)) {
+      return interactionPolicy.Check.NO_NEED_TO_PROMPT;
+    }
+    const sessionUid = oidc.session.uid;
+    const current = await services.sessionTenant.get({ sessionUid });
+    if (!current || current.accountId !== String(accountId) || !(await identity.isTenantMember(accountId, current.tenantId, services.app.scopeOfClient(oidc.client.clientId)))) {
+      return interactionPolicy.Check.NO_NEED_TO_PROMPT;
+    }
+    const mfa = await identity.getTenantMfa(current.tenantId);
+    if (!mfa.enabled) {
+      return interactionPolicy.Check.NO_NEED_TO_PROMPT;
+    }
+    const verifiedAt = await services.mfa.getSessionVerifiedAt({ sessionUid, accountId });
+    if (verifiedAt && Date.now() - new Date(verifiedAt).getTime() <= mfa.maxAge * 1000) {
+      return interactionPolicy.Check.NO_NEED_TO_PROMPT;
+    }
+    return interactionPolicy.Check.REQUEST_PROMPT;
+  });
+
   const policy = interactionPolicy.base();
   policy.add(new interactionPolicy.Prompt({ name: 'tenant', requestable: false }, ctx => ({ tenant_id: ctx.oidc.params.tenant_id }), tenantCheck), 1);
+  policy.add(new interactionPolicy.Prompt({ name: 'mfa', requestable: false }, () => ({}), mfaCheck), 2);
 
   const ttl = options.ttl;
   const configuration = {
@@ -119,7 +147,8 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
       keys: [deriveKey(options.cookieSecret || options.keyEncryptionSecret, 'cookie').toString('base64url')]
     },
     claims: {
-      openid: ['sub'],
+      // amr 归到 openid scope 才会写进 id_token，RP 据此判断本次登录是否做过 MFA（含 sms、mfa）
+      openid: ['sub', 'amr'],
       profile: ['name', 'nickname', 'picture', 'gender', 'birthdate'],
       email: ['email'],
       phone: ['phone_number']
@@ -280,6 +309,7 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
       }
       if (!(await getAdapter('Session').findByUid(session.uid))) {
         await services.sessionTenant.remove({ sessionUid: session.uid });
+        await services.mfa.removeSession({ sessionUid: session.uid });
       }
     } catch (e) {
       fastify.log.warn({ err: e }, 'fastify-oidc: 登出后清理会话失败');

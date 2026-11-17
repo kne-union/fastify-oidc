@@ -43,9 +43,12 @@ module.exports = fp(async (fastify, options) => {
         } else if (hintPlatform) {
           const key = String(hintPlatform).replace(/\/+$/, '').toLowerCase();
           selected = platforms.find(p => p.platformOrigin.toLowerCase() === key || p.platformName === hintPlatform);
-        } else if (platforms.length === 1) {
+        } else if (options.mode === 'central' && platforms.length === 1) {
+          // central 单平台：默认用该平台登录
           selected = platforms[0];
         }
+        // standalone：即使 hydrate 了配对主平台（供验运维令牌），默认登录仍用本进程 IdP，
+        // 否则前端会去主平台拿 token，本地 account 用户对不上 → getSuperAdminInfo 401
       }
       const issuer = selected?.issuer || runtime.issuer;
       const clientId = selected?.clientId || runtime.clientId;

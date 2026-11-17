@@ -23,11 +23,8 @@ module.exports = ({ options, getLocalJWKS, getPlatforms }) => {
   };
 
   const resolveVerifyContext = (token, { audience } = {}) => {
-    const local = getLocalJWKS && getLocalJWKS();
-    if (local) {
-      return { jwks: local, issuer: runtime.issuer, audience: audience || runtime.audience };
-    }
-
+    // 先按 token.iss 匹配已配对 platforms（standalone 远程挂主平台时本地也有 IdP JWKS，
+    // 若优先走 local 会把主平台签发的运维令牌验成「服务令牌无效」）
     const platforms = typeof getPlatforms === 'function' ? getPlatforms() : [];
     if (platforms && platforms.length) {
       let iss;
@@ -37,14 +34,18 @@ module.exports = ({ options, getLocalJWKS, getPlatforms }) => {
         throw createError(null, 'authenticationFailed');
       }
       const platform = platforms.find(p => p.issuer === iss || p.issuer === String(iss || '').replace(/\/+$/, ''));
-      if (!platform || platform.status !== 'paired') {
-        throw createError(null, 'authenticationFailed');
+      if (platform && platform.status === 'paired') {
+        return {
+          jwks: getRemoteJWKS(platform.jwksUri || `${platform.issuer}/jwks`),
+          issuer: platform.issuer,
+          audience: audience || platform.audience || runtime.audience
+        };
       }
-      return {
-        jwks: getRemoteJWKS(platform.jwksUri || `${platform.issuer}/jwks`),
-        issuer: platform.issuer,
-        audience: audience || platform.audience || runtime.audience
-      };
+    }
+
+    const local = getLocalJWKS && getLocalJWKS();
+    if (local) {
+      return { jwks: local, issuer: runtime.issuer, audience: audience || runtime.audience };
     }
 
     return {

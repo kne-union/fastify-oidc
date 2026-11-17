@@ -129,6 +129,11 @@ module.exports = ({ fastify, options, translator }) => {
 
   const close = () => timers.forEach(clearInterval);
 
+  const getSigningJwk = async () => {
+    const { keys } = await getServices().key.getPrivateJwks();
+    return (keys && keys[0]) || null;
+  };
+
   return {
     identity,
     init,
@@ -138,6 +143,7 @@ module.exports = ({ fastify, options, translator }) => {
     getAdapter: name => assertReady().getAdapter(name),
     getLocalJWKS: () => state && state.localJWKS,
     getPublicJwks: () => state && state.publicJwks,
+    getSigningJwk,
     handle: (req, res) => assertReady().callback(req, res)
   };
 };

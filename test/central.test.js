@@ -83,7 +83,14 @@ describe('@kne/fastify-oidc central 模式', function () {
   it('should expose public login config pointing to idp', async () => {
     const res = await fetch(`${childOrigin}/api/oidc/config`);
     expect(res.status).to.equal(200);
-    expect(await res.json()).to.deep.equal({ mode: 'central', isMain: false, issuer: `${idpOrigin}/oidc`, clientId: 'child-spa', audience: `${childOrigin}/api` });
+    expect(await res.json()).to.deep.equal({
+      mode: 'central',
+      isMain: false,
+      issuer: `${idpOrigin}/oidc`,
+      clientId: 'child-spa',
+      audience: `${childOrigin}/api`,
+      platforms: []
+    });
   });
 
   it('should mark main project in public login config', async () => {

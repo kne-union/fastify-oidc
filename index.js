@@ -13,6 +13,8 @@ const createAuthenticate = require('./libs/resource/authenticate');
 const createTenantSync = require('./libs/resource/tenant-sync');
 const createAppRegistry = require('./libs/resource/app-registry');
 const createRemoteTenant = require('./libs/resource/remote-tenant');
+const { createPlatformsRegistry } = require('./libs/utils/platforms');
+const { createPlatformAssertionSigner, createPlatformAssertionVerifier, createMemoryJtiStore } = require('./libs/utils/platform-assertion');
 const { locale, createTranslator } = require('./libs/utils/intl');
 
 const DAY = 24 * 60 * 60;
@@ -57,6 +59,8 @@ module.exports = fp(
         fileNamespace: 'fileManager',
         clients: [],
         resourceServers: [],
+        /** central 多平台：初始 platforms[]，也可运行时 platforms.setAll / upsert */
+        platforms: [],
         seedSelf: true,
         selfClient: {},
         serviceScopes: ['user:read', 'tenant:read', 'app:register', 'tenant:sync'],
@@ -109,7 +113,23 @@ module.exports = fp(
     const translator = createTranslator({ fastify, options });
     const idp = runtime.idpEnabled ? createIdp({ fastify, options, translator }) : null;
     const revocation = createRevocation({ store: options.revocationStore, ttl: Math.max(options.ttl.accessToken, options.ttl.idToken) + options.clockTolerance });
-    const verifier = createVerifier({ options, getLocalJWKS: idp ? () => idp.getLocalJWKS() : null });
+    const platforms = createPlatformsRegistry({ initial: options.platforms || [] });
+    const verifier = createVerifier({
+      options,
+      getLocalJWKS: idp ? () => idp.getLocalJWKS() : null,
+      getPlatforms: () => platforms.getAll()
+    });
+    let readyPromise = Promise.resolve();
+    const platformAssertion = idp
+      ? createPlatformAssertionSigner({
+          issuer: runtime.issuer,
+          clockTolerance: options.clockTolerance,
+          getPrivateJwk: async () => {
+            await readyPromise;
+            return idp.getSigningJwk();
+          }
+        })
+      : createPlatformAssertionVerifier({ clockTolerance: options.clockTolerance, jtiStore: createMemoryJtiStore() });
     const serviceClient = createServiceClient({ options });
     const userMirror = createUserMirror({ fastify, options, serviceClient });
     const dpop = createDPoP({ clockTolerance: options.clockTolerance, replayStore: options.dpopReplayStore });
@@ -139,7 +159,6 @@ module.exports = fp(
       ]);
     }
 
-    let readyPromise = Promise.resolve();
     if (idp) {
       readyPromise = fastify.sequelize.syncPromise.then(() => idp.init());
       readyPromise.catch(err => fastify.log.error({ err }, 'fastify-oidc: IdP 初始化失败'));
@@ -157,6 +176,8 @@ module.exports = fp(
         ['idp', idp],
         ['revocation', revocation],
         ['verifier', verifier],
+        ['platforms', platforms],
+        ['platformAssertion', platformAssertion],
         ['serviceClient', serviceClient],
         ['userMirror', userMirror],
         ['tenantSync', tenantSync],

@@ -1,29 +1,64 @@
-const { jwtVerify, createRemoteJWKSet } = require('jose');
+const { jwtVerify, createRemoteJWKSet, decodeJwt } = require('jose');
 const { createError } = require('../utils/intl');
 const { TENANT_SYNC_EVENT } = require('../utils/app-permissions');
 
 const LOGOUT_EVENT = 'http://schemas.openid.net/event/backchannel-logout';
 
 /**
- * standalone 模式直接用本进程的公钥集验签；central 模式从主项目的 jwks_uri 拉取（jose 内置缓存与按 kid 刷新）
+ * standalone：本进程 JWKS。
+ * central 单平台：主项目 jwks_uri。
+ * central 多平台：先读 token.iss，命中 platforms 后用对应 JWKS + audience 验签。
  */
-module.exports = ({ options, getLocalJWKS }) => {
+module.exports = ({ options, getLocalJWKS, getPlatforms }) => {
   const { runtime } = options;
-  let remote;
+  const remoteByUri = new Map();
 
-  const getJWKS = () => {
-    const local = getLocalJWKS && getLocalJWKS();
-    if (local) {
-      return local;
+  const getRemoteJWKS = jwksUri => {
+    let set = remoteByUri.get(jwksUri);
+    if (!set) {
+      set = createRemoteJWKSet(new URL(jwksUri));
+      remoteByUri.set(jwksUri, set);
     }
-    remote = remote || createRemoteJWKSet(new URL(runtime.jwksUri));
-    return remote;
+    return set;
   };
 
-  const verifyAccessToken = async (token, { audience = runtime.audience } = {}) => {
-    const { payload } = await jwtVerify(token, getJWKS(), {
+  const resolveVerifyContext = (token, { audience } = {}) => {
+    const local = getLocalJWKS && getLocalJWKS();
+    if (local) {
+      return { jwks: local, issuer: runtime.issuer, audience: audience || runtime.audience };
+    }
+
+    const platforms = typeof getPlatforms === 'function' ? getPlatforms() : [];
+    if (platforms && platforms.length) {
+      let iss;
+      try {
+        iss = decodeJwt(token).iss;
+      } catch (e) {
+        throw createError(null, 'authenticationFailed');
+      }
+      const platform = platforms.find(p => p.issuer === iss || p.issuer === String(iss || '').replace(/\/+$/, ''));
+      if (!platform || platform.status !== 'paired') {
+        throw createError(null, 'authenticationFailed');
+      }
+      return {
+        jwks: getRemoteJWKS(platform.jwksUri || `${platform.issuer}/jwks`),
+        issuer: platform.issuer,
+        audience: audience || platform.audience || runtime.audience
+      };
+    }
+
+    return {
+      jwks: getRemoteJWKS(runtime.jwksUri),
       issuer: runtime.issuer,
-      audience,
+      audience: audience || runtime.audience
+    };
+  };
+
+  const verifyAccessToken = async (token, { audience } = {}) => {
+    const ctx = resolveVerifyContext(token, { audience });
+    const { payload } = await jwtVerify(token, ctx.jwks, {
+      issuer: ctx.issuer,
+      audience: ctx.audience,
       typ: 'at+jwt',
       clockTolerance: options.clockTolerance
     });
@@ -31,9 +66,10 @@ module.exports = ({ options, getLocalJWKS }) => {
   };
 
   const verifyLogoutToken = async (token, { audience }) => {
-    const { payload } = await jwtVerify(token, getJWKS(), {
-      issuer: runtime.issuer,
-      audience,
+    const ctx = resolveVerifyContext(token, { audience });
+    const { payload } = await jwtVerify(token, ctx.jwks, {
+      issuer: ctx.issuer,
+      audience: ctx.audience || audience,
       clockTolerance: options.clockTolerance
     });
     if (!payload.events || typeof payload.events[LOGOUT_EVENT] !== 'object') {
@@ -49,9 +85,10 @@ module.exports = ({ options, getLocalJWKS }) => {
   };
 
   const verifyTenantSyncToken = async (token, { audience }) => {
-    const { payload } = await jwtVerify(token, getJWKS(), {
-      issuer: runtime.issuer,
-      audience,
+    const ctx = resolveVerifyContext(token, { audience });
+    const { payload } = await jwtVerify(token, ctx.jwks, {
+      issuer: ctx.issuer,
+      audience: ctx.audience || audience,
       typ: 'tenant-sync+jwt',
       clockTolerance: options.clockTolerance,
       requiredClaims: ['jti', 'exp', 'tenant_id']
@@ -62,5 +99,5 @@ module.exports = ({ options, getLocalJWKS }) => {
     return payload;
   };
 
-  return { verifyAccessToken, verifyLogoutToken, verifyTenantSyncToken };
+  return { verifyAccessToken, verifyLogoutToken, verifyTenantSyncToken, resolveVerifyContext };
 };

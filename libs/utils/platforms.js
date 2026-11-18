@@ -2,6 +2,9 @@
  * central 多平台：运行时 platforms[]（按 platformOrigin / issuer 唯一）。
  * 登录与验签按 token.iss 选择对应 JWKS + audience。
  */
+const PLATFORM_SERVICE_FIELDS = ['serviceClientSecret', 'appCode', 'apiBase', 'serviceAudience', 'claimNamespace'];
+const URL_FIELDS = ['apiBase', 'serviceAudience'];
+
 const normalizePlatform = (item = {}) => {
   const platformOrigin = String(item.platformOrigin || '')
     .replace(/\/+$/, '')
@@ -12,7 +15,7 @@ const normalizePlatform = (item = {}) => {
   if (!platformOrigin || !issuer) {
     throw new Error('fastify-oidc: platform 需要 platformOrigin 与 issuer');
   }
-  return {
+  const platform = {
     platformOrigin,
     platformName: item.platformName || platformOrigin,
     issuer,
@@ -23,6 +26,14 @@ const normalizePlatform = (item = {}) => {
     status: item.status || 'paired',
     pairedAt: item.pairedAt || null
   };
+  // standalone 服务该平台的用户与租户时才需要（不进 publicList）：服务 client 密钥、本应用在平台的 code、平台服务接口地址；
+  // 只在传入时写入，upsert 未带这些字段时保留已有值
+  PLATFORM_SERVICE_FIELDS.forEach(key => {
+    if (item[key]) {
+      platform[key] = URL_FIELDS.includes(key) ? String(item[key]).replace(/\/+$/, '') : String(item[key]);
+    }
+  });
+  return platform;
 };
 
 const createPlatformsRegistry = ({ initial = [], onChange = null } = {}) => {

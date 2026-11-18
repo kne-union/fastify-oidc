@@ -20,7 +20,9 @@ const claimNames = namespace => ({
   tenantUserId: `${namespace}tenant_user_id`,
   roles: `${namespace}roles`,
   permissions: `${namespace}permissions`,
-  clientToken: `${namespace}client_token`
+  clientToken: `${namespace}client_token`,
+  // 令牌签发时间（毫秒）：标准 iat 只有秒精度，吊销需要它区分同一秒内先后签发的令牌
+  issuedAtMs: `${namespace}issued_at_ms`
 });
 
 const TENANT_MODES = ['client', 'independent'];

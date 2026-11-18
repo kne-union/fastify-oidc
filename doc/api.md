@@ -295,9 +295,11 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 
 `POST /api/oidc/backchannel-logout`，`application/x-www-form-urlencoded`，参数 `logout_token`。校验通过后撤销 `sid`（无 sid 时按 `sub`），返回 200。
 
-#### 租户变更通知（independent 子应用）
+#### 租户变更通知（independent 子应用 / 已配对主平台的 standalone 应用）
 
 `POST /api/oidc/tenant-sync`，`application/json` 或 `application/x-www-form-urlencoded`，参数 `tenant_sync_token`。校验宿主签名、`aud` 为本应用 serviceClient 的 clientId、`jti` 未使用过后返回 `{}`，并在后台回拉该租户快照。签名错误、过期或重放返回 400。
+
+standalone 应用按令牌 `iss` 找到已配对的平台，`aud` 须为该平台登记的 `serviceClientId`；`iss` 不是已配对平台时返回 400。
 
 #### 租户代理（client 子应用，`tenantProxy`）
 
@@ -363,6 +365,9 @@ central 模式下主项目的 `avatar` 是主项目文件库的 id，子项目�
 | `fastify.oidc.appRegistry.register()` / `whenStarted()` / `getState()` | 子应用手动注册 / 等待启动时的首次注册 / 注册状态 |
 | `fastify.oidc.tenantSync.sync(hostTenantId)` / `ensureFresh(hostTenantId)` / `whenIdle(hostTenantId)` | independent 子应用：立即回拉 / 按 `tenantSyncTTL` 回拉并返回本地托管租户 id / 等待进行中的同步 |
 | `fastify.oidc.services.app.list()` / `detail()` / `setStatus()` / `remove()` / `register()` | 同管理接口 / 服务接口（standalone） |
+| `fastify.oidc.services.app.register({ ..., permissionRoot: true })` | 登记权限树由宿主其他来源维护在顶层 `<code>` 下的应用（如应用中心关联的外部应用）：不再挂 `apps:<code>` 权限树，开通判断与权限去前缀都按 `<code>` |
+| `fastify.oidc.platforms.upsert(platform)` / `remove(platformOrigin)` / `getAll()` / `publicList()` | 已配对主平台登记；`serviceClientSecret` / `appCode` / `apiBase` / `serviceAudience` / `claimNamespace` 只在内部使用，不出现在 `publicList()` 与 `/config` 中 |
+| `fastify.oidc.platformContexts.forIssuer(iss)` | standalone：取已配对平台的上下文（`serviceClient` / `userMirror` / `tenantSync`），未配对返回 `null` |
 | `fastify.oidc.services.tenantPush.push(tenantId)` | 立即通知 independent 子应用回拉该租户（standalone） |
 | `fastify.oidc.serviceClient.exchangeToken({ subjectToken, resource, scope })` | Token Exchange |
 | `fastify.oidc.revocation.revokeSession(sid)` / `revokeSubject(sub)` / `isRevoked(payload)` | 撤销列表 |
@@ -458,13 +463,13 @@ central 模式下主项目的 `avatar` 是主项目文件库的 id，子项目�
 
 | 属性名 | 类型 | 说明 |
 |--------|------|------|
-| code | string | 应用编码（唯一），宿主权限 code 前缀 `apps:<code>` |
+| code | string | 应用编码（唯一），宿主权限 code 前缀 `apps:<code>`；`permissions.root` 为 true 时为顶层 `<code>` |
 | name / description | string | 名称 / 描述 |
 | tenantMode | string | `client` / `independent` |
 | serviceClientId | string | 首次注册的服务 client_id，之后只有它能更新该应用、读取应用相关数据 |
 | clientIds | JSON | 子应用 SPA 的 client_id 列表 |
 | resource | string | 子应用资源服务 identifier |
-| permissions | JSON | 子应用上报的权限树（不含前缀） |
+| permissions | JSON | 子应用上报的权限树（不含前缀）；`permissionRoot` 登记时为 `{ root: true }` |
 | permissionsHash | string | 权限树摘要，未变化时不重建宿主权限树 |
 | tenantSyncUri | string | independent 接收通知的地址 |
 | registeredAt | Date | 最近一次注册时间 |
@@ -575,6 +580,15 @@ const store = {
 fastify.register(require('@kne/fastify-oidc'), { revocationStore: store, dpopReplayStore: store });
 ```
 
+##### 按用户撤销的时间精度
+
+JWT 的标准 `iat` 只有秒精度，同一秒内「先撤销、后签发」与「先签发、后撤销」的令牌无法区分，按秒比较会把刚签发的有效令牌误拒。本 IdP 签发的令牌（含登录、刷新与 `issueUserAccessToken`）带毫秒级签发时间 claim `{namespace}issued_at_ms`（如 `https://idp.example.com/issued_at_ms`），`revokeSubject` 同时写入 `sub:{id}`（秒）与 `sub-ms:{id}`（毫秒）两个键：
+
+- 令牌带毫秒 claim 且存在 `sub-ms` 记录：按毫秒比较，签发时间 **不晚于** 撤销时间的令牌失效，之后签发的有效。
+- 令牌没有该 claim（旧版 IdP、外部签发），或撤销记录只有秒（旧版进程写入）：退回按秒比较，同一秒内保守地视为已撤销。
+
+自定义 `revocationStore` 无需改动；`sub-ms:*` 值是毫秒时间戳，Redis 返回字符串也可以。
+
 #### 签名密钥轮换
 
 | 状态 | 用途 |
@@ -638,6 +652,22 @@ independent 模式的同步范围（以宿主为准，全部只读）：
 - 推送是尽力而为，失败只记日志；服务关闭时会等进行中的推送与同步结束；子应用请求带宿主租户时，本地没有对应托管租户会先同步拉取，已超过 `tenantSyncTTL` 则后台刷新。同一租户的同步串行执行，进行中再收到通知只重跑一次。
 - independent 模式下 `request.user.hostTenantId` 为 token 中的宿主租户，`request.user.tenantId` 与 `request.authenticatePayload.tenantId` 由本地默认租户决定（首次同步时为成员设置默认租户），本地没有默认租户时用宿主租户对应的托管租户。
 - 交互时子应用 client 只考虑已开通该应用的租户；IdP 会话的当前租户在宿主与子应用之间共享，若会话当前租户未开通该应用且只有一个可用租户，会切换会话租户。
+
+#### standalone 应用配对主平台
+
+standalone 应用自己是 IdP，用户和租户都在本地维护。它与主平台配对后（`platforms.upsert`，一般由 `@kne/fastify-app-runtime` 的配对流程写入），会同时服务主平台的用户与租户，相当于对每个已配对平台各跑一套 central + independent：
+
+| 来源 | 用户 | 租户 |
+|------|------|------|
+| 本地 IdP 签发的令牌 | 本地用户 | 本地自建租户，本地维护 |
+| 已配对平台签发的令牌（按 `iss` 识别） | 用平台的服务 client 拉取资料，镜像到本地用户表，id 为平台用户 id | 平台租户同步为本地只读托管租户（`managedBy.issuer` 为平台 issuer），由平台用户修改 |
+
+- 平台登记需带 `serviceClientId` + `serviceClientSecret`；`appCode` 不传时从 `audience`（`{平台}/app/{code}/api`）推导；`apiBase` / `serviceAudience` 默认 `{平台 origin}${prefix}`；`claimNamespace` 默认 `{平台 origin}/`。
+- 平台令牌的 `request.user.hostTenantId` 为平台租户，`request.user.tenantId` 与 `request.authenticatePayload.tenantId` 为对应的本地托管租户 id（平台租户未开通该应用时为 `null`），fastify-tenant 的 `tenantUser` 按本地租户读取成员与权限。
+- 镜像平台用户时不同步平台的超级管理员身份，本地超级管理员仍由本地维护。
+- 同一个人在本地和平台各有账号时是两个用户，不做合并。
+- 平台登记该应用时用 `register({ tenantMode: 'independent', tenantSyncUri: '{应用}/api/oidc/tenant-sync', ... })`，平台租户变更后会推送通知，应用按平台验签后回拉。
+- 平台用户直接打开应用登录：前端请求 `/api/oidc/config?iss={平台 issuer}`（或 `?platform={平台 origin}`）拿到平台的 issuer / client_id / audience 后发起授权；不带参数时仍用本地 IdP。
 
 #### 国际化
 

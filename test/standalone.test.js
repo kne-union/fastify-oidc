@@ -297,7 +297,8 @@ describe('@kne/fastify-oidc standalone 模式', function () {
 
     it('should revoke tokens on permission change and allow silent re-login', async () => {
       const { tokens, browser } = await loginAs({ credentials: { email: 'zhangsan@test.com', password: 'pwd-1' }, tenantId: 'tenant-a' });
-      await new Promise(resolve => setTimeout(resolve, 1100));
+      // 令牌带毫秒级签发时间，同一秒内先签发后吊销也能区分，不需要等到下一秒
+      expect(decodeJwt(tokens.access_token)[`${app.origin}/issued_at_ms`]).to.be.a('number');
       await app.fastify.oidc.onPermissionChange({ userIds: ['1001'] });
       expect((await getJson(`${app.origin}/api/me`, tokens.access_token)).status).to.equal(401);
       let error;
@@ -307,7 +308,7 @@ describe('@kne/fastify-oidc standalone 模式', function () {
         error = e;
       }
       expect(error).to.exist;
-      await new Promise(resolve => setTimeout(resolve, 1100));
+      // 吊销之后立即静默登录签发的新令牌（可能与吊销在同一秒内）必须有效
       const { tokens: again, onInteraction } = await loginAs({ browser, extra: { prompt: 'none' } });
       expect(onInteraction.steps).to.deep.equal([]);
       expect((await getJson(`${app.origin}/api/me`, again.access_token)).status).to.equal(200);

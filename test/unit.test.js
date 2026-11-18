@@ -100,6 +100,32 @@ describe('@kne/fastify-oidc 单元测试', () => {
       expect(await revocation.isRevoked({ sid: 'sid-2', sub: 'u1', iat: now + 10 })).to.equal(false);
     });
 
+    it('should compare issued-at in milliseconds when both token and revocation carry it', async () => {
+      const data = new Map();
+      const store = { get: async key => data.get(key), set: async (key, value) => data.set(key, value) };
+      const revocation = createRevocation({ ttl: 60, store, issuedAtMsClaim: 'issued_at_ms' });
+      await revocation.revokeSubject('u1');
+      const revokedAtMs = data.get('sub-ms:u1');
+      const iat = Math.floor(revokedAtMs / 1000);
+      // 同一秒内：吊销之前签发的仍被拒，吊销之后签发的有效
+      expect(await revocation.isRevoked({ sub: 'u1', iat, issued_at_ms: revokedAtMs - 5 })).to.equal(true);
+      expect(await revocation.isRevoked({ sub: 'u1', iat, issued_at_ms: revokedAtMs })).to.equal(true);
+      expect(await revocation.isRevoked({ sub: 'u1', iat, issued_at_ms: revokedAtMs + 1 })).to.equal(false);
+      // 没有毫秒 claim 的令牌退回按秒比较：同一秒内保守视为已吊销
+      expect(await revocation.isRevoked({ sub: 'u1', iat })).to.equal(true);
+      expect(await revocation.isRevoked({ sub: 'u1', iat: iat + 1 })).to.equal(false);
+      // 吊销是按用户的：别的用户不受影响
+      expect(await revocation.isRevoked({ sub: 'u2', iat, issued_at_ms: revokedAtMs - 5 })).to.equal(false);
+    });
+
+    it('should fall back to seconds when the revocation record has no milliseconds', async () => {
+      const data = new Map([['sub:u1', 1000]]);
+      const store = { get: async key => data.get(key), set: async (key, value) => data.set(key, value) };
+      const revocation = createRevocation({ ttl: 60, store, issuedAtMsClaim: 'issued_at_ms' });
+      expect(await revocation.isRevoked({ sub: 'u1', iat: 1000, issued_at_ms: 1000 * 1000 + 900 })).to.equal(true);
+      expect(await revocation.isRevoked({ sub: 'u1', iat: 1001, issued_at_ms: 1001 * 1000 })).to.equal(false);
+    });
+
     it('should use custom store', async () => {
       const data = new Map();
       const revocation = createRevocation({ ttl: 60, store: { get: async key => data.get(key), set: async (key, value) => data.set(key, value) } });

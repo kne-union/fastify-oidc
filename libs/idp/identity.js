@@ -1,4 +1,4 @@
-const { scopePermissions, isAppEnabledIn } = require('../utils/app-permissions');
+const { appModuleCode, scopePermissions, isAppEnabledIn } = require('../utils/app-permissions');
 const { COMPANY_FIELDS } = require('../utils/tenant-images');
 
 const ACTIVE_USER_STATUS = [0, 1];
@@ -33,9 +33,11 @@ module.exports = ({ fastify, options }) => {
     }
   };
 
-  const isAppEnabled = async (tenantId, appCode) => isAppEnabledIn(await getTenantPermissionCodes(tenantId), appCode, prefix);
+  const moduleCodeOf = appCode => appModuleCode(prefix, appCode, fastify[options.name].services.app?.findByCode(appCode));
 
-  const scopeAppPermissions = (permissions, appCode) => scopePermissions(permissions, appCode, prefix);
+  const isAppEnabled = async (tenantId, appCode) => isAppEnabledIn(await getTenantPermissionCodes(tenantId), moduleCodeOf(appCode));
+
+  const scopeAppPermissions = (permissions, appCode) => scopePermissions(permissions, moduleCodeOf(appCode));
 
   const getUser = async id => {
     try {
@@ -175,7 +177,7 @@ module.exports = ({ fastify, options }) => {
     }
     const hostTenant = plain(await services.tenant.detail({ id: tenantId, withTenantSetting: false }));
     const codes = await getTenantPermissionCodes(tenantId);
-    const enabled = appOpen && isAppEnabledIn(codes, appCode, prefix);
+    const enabled = appOpen && isAppEnabledIn(codes, moduleCodeOf(appCode));
     const snapshot = {
       tenant: Object.assign(pickFields(hostTenant, SNAPSHOT_TENANT_FIELDS), {
         id: String(hostTenant.id),

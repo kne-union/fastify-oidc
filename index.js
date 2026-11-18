@@ -14,6 +14,7 @@ const createTenantSync = require('./libs/resource/tenant-sync');
 const createAppRegistry = require('./libs/resource/app-registry');
 const createRemoteTenant = require('./libs/resource/remote-tenant');
 const { createPlatformsRegistry } = require('./libs/utils/platforms');
+const createPlatformContexts = require('./libs/resource/platform-context');
 const { createPlatformAssertionSigner, createPlatformAssertionVerifier, createMemoryJtiStore } = require('./libs/utils/platform-assertion');
 const { locale, createTranslator } = require('./libs/utils/intl');
 
@@ -112,7 +113,11 @@ module.exports = fp(
 
     const translator = createTranslator({ fastify, options });
     const idp = runtime.idpEnabled ? createIdp({ fastify, options, translator }) : null;
-    const revocation = createRevocation({ store: options.revocationStore, ttl: Math.max(options.ttl.accessToken, options.ttl.idToken) + options.clockTolerance });
+    const revocation = createRevocation({
+      store: options.revocationStore,
+      ttl: Math.max(options.ttl.accessToken, options.ttl.idToken) + options.clockTolerance,
+      issuedAtMsClaim: runtime.claims.issuedAtMs
+    });
     const platforms = createPlatformsRegistry({ initial: options.platforms || [] });
     const verifier = createVerifier({
       options,
@@ -136,7 +141,9 @@ module.exports = fp(
     const tenantSync = runtime.tenantRole === 'independent' ? createTenantSync({ fastify, options, serviceClient, userMirror }) : null;
     const appRegistry = runtime.app ? createAppRegistry({ fastify, options, serviceClient }) : null;
     const remoteTenant = runtime.tenantRole === 'client' ? createRemoteTenant({ serviceClient }) : null;
-    const authenticate = createAuthenticate({ fastify, options, verifier, dpop, revocation, userMirror, serviceClient, tenantSync, translator });
+    // standalone 与主平台配对后，按令牌 iss 用对应平台的服务凭据镜像用户、同步租户
+    const platformContexts = runtime.idpEnabled ? createPlatformContexts({ fastify, options, platforms }) : null;
+    const authenticate = createAuthenticate({ fastify, options, verifier, dpop, revocation, userMirror, serviceClient, tenantSync, platformContexts, translator });
 
     if (appRegistry) {
       fastify.addHook('onReady', async () => {
@@ -146,6 +153,9 @@ module.exports = fp(
     }
     if (tenantSync) {
       fastify.addHook('onClose', async () => tenantSync.close());
+    }
+    if (platformContexts) {
+      fastify.addHook('onClose', async () => platformContexts.close());
     }
 
     const modules = [];
@@ -181,6 +191,7 @@ module.exports = fp(
         ['serviceClient', serviceClient],
         ['userMirror', userMirror],
         ['tenantSync', tenantSync],
+        ['platformContexts', platformContexts],
         ['appRegistry', appRegistry],
         ['tenant', remoteTenant],
         ['authenticate', authenticate],

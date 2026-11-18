@@ -227,7 +227,7 @@ module.exports = async ({ fastify, options, identity, translator, jwks, getLocal
       if (!accountId) {
         return undefined;
       }
-      const extra = {};
+      const extra = { [claims.issuedAtMs]: Date.now() };
       let sid = token.sid;
       if (!sid && token.sessionUid) {
         const session = await ctx.oidc.provider.Session.findByUid(token.sessionUid);

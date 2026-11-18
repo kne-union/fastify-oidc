@@ -1,7 +1,7 @@
 const fp = require('fastify-plugin');
 const httpErrors = require('http-errors');
 const { createError } = require('../utils/intl');
-const { wrapAppTree, countPermissions, hashPermissions } = require('../utils/app-permissions');
+const { isRootPermissionApp, wrapAppTree, countPermissions, hashPermissions } = require('../utils/app-permissions');
 
 const { NotFound, BadRequest, Forbidden } = httpErrors;
 
@@ -33,13 +33,16 @@ module.exports = fp(async (fastify, options) => {
       return;
     }
     const next = new Map();
-    listOpen().forEach(app => {
-      const signature = `${app.name}:${app.permissionsHash}`;
-      if (loaded.get(app.code) !== signature) {
-        tenant.setPermissionSource(sourceKey(app.code), wrapAppTree({ prefix: options.appPermissionPrefix, centerName: options.appCenterName, app }), { defaultDisabled: true });
-      }
-      next.set(app.code, signature);
-    });
+    // permissionRoot 的应用权限树由宿主其他来源挂在顶层，这里不再挂一份 apps:<code>
+    listOpen()
+      .filter(app => !isRootPermissionApp(app))
+      .forEach(app => {
+        const signature = `${app.name}:${app.permissionsHash}`;
+        if (loaded.get(app.code) !== signature) {
+          tenant.setPermissionSource(sourceKey(app.code), wrapAppTree({ prefix: options.appPermissionPrefix, centerName: options.appCenterName, app }), { defaultDisabled: true });
+        }
+        next.set(app.code, signature);
+      });
     loaded.forEach((signature, code) => !next.has(code) && tenant.removePermissionSource(sourceKey(code)));
     loaded = next;
   };
@@ -72,7 +75,7 @@ module.exports = fp(async (fastify, options) => {
     return item;
   };
 
-  const register = async ({ serviceClientId, code, name, description, tenantMode = 'client', clientId, resource, permissions, tenantSyncUri }) => {
+  const register = async ({ serviceClientId, code, name, description, tenantMode = 'client', clientId, resource, permissions, permissionRoot = false, tenantSyncUri }) => {
     if (!code || !/^[A-Za-z0-9_-]+$/.test(code)) {
       throw createError(BadRequest, 'appCodeInvalid');
     }
@@ -84,7 +87,8 @@ module.exports = fp(async (fastify, options) => {
     if (item && !removed && item.serviceClientId !== serviceClientId) {
       throw createError(Forbidden, 'appCodeTaken', { code });
     }
-    const tree = permissions && typeof permissions === 'object' ? permissions : { modules: [] };
+    // permissionRoot：权限树由宿主其他来源维护在顶层 <code> 下（如应用中心关联的外部应用），只记标记，开通与权限裁剪都按顶层 code
+    const tree = permissionRoot ? { root: true } : permissions && typeof permissions === 'object' ? permissions : { modules: [] };
     const permissionsHash = hashPermissions(tree);
     const values = {
       name: name || code,

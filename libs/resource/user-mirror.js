@@ -59,7 +59,7 @@ module.exports = ({ fastify, options, serviceClient }) => {
         profile.avatar = avatar;
       }
       // 主项目超级管理员身份以主项目为准，升降级都同步到镜像，子项目 authenticate.admin 照常读本地 isSuperAdmin
-      if (typeof remote?.isSuperAdmin === 'boolean' && getModel().rawAttributes.isSuperAdmin) {
+      if (options.mirrorSuperAdmin !== false && typeof remote?.isSuperAdmin === 'boolean' && getModel().rawAttributes.isSuperAdmin) {
         profile.isSuperAdmin = remote.isSuperAdmin;
       }
       return profile;

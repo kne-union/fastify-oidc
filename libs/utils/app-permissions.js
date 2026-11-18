@@ -3,16 +3,19 @@ const crypto = require('node:crypto');
 const TENANT_SYNC_EVENT = 'urn:kne:oidc:tenant-sync';
 
 /**
- * 子应用权限在宿主侧统一挂在 `${prefix}:<appCode>:` 之下，模块 code `${prefix}:<appCode>` 即租户是否开通该应用的开关
+ * 子应用权限在宿主侧统一挂在 `${prefix}:<appCode>:` 之下，模块 code `${prefix}:<appCode>` 即租户是否开通该应用的开关。
+ * 权限树由宿主其他来源维护的应用（注册时 permissionRoot，如应用中心关联的外部应用）挂在顶层 `<appCode>` 下
  */
-const appModuleCode = (prefix, appCode) => `${prefix}:${appCode}`;
+const isRootPermissionApp = app => app?.permissions?.root === true;
 
-const scopePermissions = (permissions, appCode, prefix) => {
-  const head = `${appModuleCode(prefix, appCode)}:`;
+const appModuleCode = (prefix, appCode, app) => (isRootPermissionApp(app) ? appCode : `${prefix}:${appCode}`);
+
+const scopePermissions = (permissions, moduleCode) => {
+  const head = `${moduleCode}:`;
   return [...new Set((permissions || []).filter(code => typeof code === 'string' && code.startsWith(head)).map(code => code.slice(head.length)))];
 };
 
-const isAppEnabledIn = (permissions, appCode, prefix) => (permissions || []).includes(appModuleCode(prefix, appCode));
+const isAppEnabledIn = (permissions, moduleCode) => (permissions || []).includes(moduleCode);
 
 const wrapAppTree = ({ prefix, centerName, app }) => ({
   modules: [
@@ -49,4 +52,4 @@ const hashPermissions = tree =>
     .update(JSON.stringify(tree || {}))
     .digest('hex');
 
-module.exports = { TENANT_SYNC_EVENT, appModuleCode, scopePermissions, isAppEnabledIn, wrapAppTree, countPermissions, hashPermissions };
+module.exports = { TENANT_SYNC_EVENT, isRootPermissionApp, appModuleCode, scopePermissions, isAppEnabledIn, wrapAppTree, countPermissions, hashPermissions };

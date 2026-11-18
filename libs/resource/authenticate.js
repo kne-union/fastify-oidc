@@ -38,7 +38,7 @@ const extractToken = request => {
  * 与 fastify.account.authenticate 同形的认证中间件：
  * 填充 request.user（统一结构）以及兼容字段 request.userInfo / request.authenticatePayload / request.tenantUserInfo
  */
-module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, serviceClient, tenantSync, translator }) => {
+module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, serviceClient, tenantSync, platformContexts, translator }) => {
   const { runtime } = options;
   const account = () => fastify[options.accountNamespace];
   const tenant = () => options.getTenant();
@@ -63,6 +63,20 @@ module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, se
         normalized.localTenantId = await tenantSync.ensureFresh(normalized.hostTenantId);
       } catch (err) {
         fastify.log.warn({ err, hostTenantId: normalized.hostTenantId }, 'fastify-oidc: 解析宿主租户对应的本地租户失败');
+      }
+    }
+  };
+
+  // standalone 已配对平台签发的令牌：宿主租户换成本地托管租户，下游 fastify-tenant 按本地租户 id 读成员与权限
+  const resolvePlatformTenant = async (normalized, context) => {
+    normalized.platformIssuer = context.issuer;
+    normalized.hostTenantId = normalized.tenantId;
+    normalized.tenantId = null;
+    if (normalized.hostTenantId && context.tenantSync) {
+      try {
+        normalized.tenantId = await context.tenantSync.ensureFresh(normalized.hostTenantId);
+      } catch (err) {
+        fastify.log.warn({ err, issuer: context.issuer, hostTenantId: normalized.hostTenantId }, 'fastify-oidc: 解析平台租户对应的本地租户失败');
       }
     }
   };
@@ -127,16 +141,19 @@ module.exports = ({ fastify, options, verifier, dpop, revocation, userMirror, se
       }
       throw createError(Unauthorized, 'accessTokenMissing');
     }
-    const normalized = normalizeClaims(payload, runtime.claims);
+    const platformContext = runtime.idpEnabled && platformContexts ? platformContexts.forIssuer(payload.iss) : null;
+    const normalized = normalizeClaims(payload, platformContext ? platformContext.claims : runtime.claims);
     if (normalized.isClient) {
       throw createError(Unauthorized, 'userTokenRequired');
     }
     if (independent) {
       await resolveIndependentTenant(normalized);
+    } else if (platformContext) {
+      await resolvePlatformTenant(normalized, platformContext);
     }
     request.user = normalized;
     request.authenticatePayload = { id: normalized.userId, tenantId: normalized.tenantId };
-    request.userInfo = await resolveUserInfo(normalized.userId);
+    request.userInfo = platformContext && account() ? await platformContext.userMirror.ensure(normalized.userId) : await resolveUserInfo(normalized.userId);
     request.appName = request.headers['x-app-name'];
   };
 

@@ -225,6 +225,7 @@ oidc-provider 的交互地址，303 跳转到 `${ORIGIN}${interactionPage}?uid={
 | `GET /api/oidc/admin/key/list` | 签名密钥列表 `[{ id, kid, alg, status, activatedAt, retiredAt, createdAt }]` | `key:manage` |
 | `POST /api/oidc/admin/key/rotate` | 轮换签名密钥 | `key:manage` |
 | `GET /api/oidc/admin/session/list?userId=` | 用户 IdP 会话 `[{ uid, loginAt, expiresAt, clients: [{ clientId, sid }] }]` | `session:manage` |
+| `GET /api/oidc/admin/session/active-users` | 活跃用户（有未过期会话），按最近登录倒序分页（`perPage` 默认 20、`currentPage`；传 `userIds`（逗号分隔）时只判断这些用户是否活跃，用于标记搜索结果）：`{ pageData: [{ id, nickname, avatar, email, phone, status, isSuperAdmin, sessionCount, lastLoginAt }], totalCount, activeCount }`，`activeCount` 为全部活跃用户数 | `session:manage` |
 | `POST /api/oidc/admin/session/revoke` | `{ uid }` 结束会话并通知子项目 | `session:manage` |
 | `POST /api/oidc/admin/session/revoke-user` | `{ userId, logout = true }` 撤销用户全部令牌，`logout` 时同时强制下线；返回 `{ grants, sessions }` | `session:manage` |
 | `GET /api/oidc/admin/app/list` | 子应用列表（`filter.keyword` / `filter.status` / `filter.tenantMode`），每项带 `permissionCount` | `app:manage` |

@@ -308,6 +308,32 @@ describe('@kne/fastify-oidc 安全与管理', function () {
       expect(missing.body.message).to.equal('会话不存在或已过期');
     });
 
+    it('should list active users with session count and drop them after logout', async () => {
+      await loginAs({ credentials: LISI });
+      await loginAs({ credentials: LISI });
+      const active = await admin('session/active-users');
+      expect(active.status).to.equal(200);
+      const lisi = active.body.pageData.find(item => item.id === '1002');
+      expect(lisi).to.exist;
+      expect(lisi.sessionCount).to.be.at.least(2);
+      expect(lisi.password).to.equal(undefined);
+      expect(active.body.totalCount).to.be.at.least(1);
+      expect(active.body.activeCount).to.equal(active.body.totalCount);
+
+      const paged = await admin('session/active-users?perPage=1&currentPage=1');
+      expect(paged.body.pageData).to.have.length(1);
+      expect(paged.body.totalCount).to.equal(active.body.totalCount);
+      const only = await admin('session/active-users?userIds=1002,999999');
+      expect(only.body.pageData.map(item => item.id)).to.deep.equal(['1002']);
+      expect(only.body.totalCount).to.equal(1);
+      expect(only.body.activeCount).to.equal(active.body.activeCount);
+      expect((await admin('session/active-users?userIds=999999')).body.pageData).to.deep.equal([]);
+
+      await admin('session/revoke-user', { userId: '1002', logout: true });
+      const after = await admin('session/active-users');
+      expect(after.body.pageData.find(item => item.id === '1002')).to.equal(undefined);
+    });
+
     it('should force logout a user with revoke-user logout=true', async () => {
       const first = await loginAs({ credentials: LISI });
       const second = await loginAs({ credentials: LISI });

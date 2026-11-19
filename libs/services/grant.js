@@ -4,6 +4,8 @@ const { createError } = require('../utils/intl');
 
 const { NotFound } = httpErrors;
 
+const ACTIVE_USER_FIELDS = ['nickname', 'avatar', 'email', 'phone', 'status'];
+const pick = (source, keys) => Object.fromEntries(keys.filter(key => source[key] !== undefined).map(key => [key, source[key]]));
 const TOKEN_MODELS = ['AccessToken', 'AuthorizationCode', 'RefreshToken', 'DeviceCode', 'BackchannelAuthenticationRequest'];
 
 module.exports = fp(async (fastify, options) => {
@@ -49,6 +51,40 @@ module.exports = fp(async (fastify, options) => {
       expiresAt: session.exp ? new Date(session.exp * 1000) : null,
       clients: Object.entries(session.authorizations || {}).map(([clientId, { sid }]) => ({ clientId, sid }))
     }));
+  };
+
+  /**
+   * 活跃用户：有未过期登录会话的用户，按最近登录倒序分页。
+   * totalCount 为符合条件的活跃用户数，activeCount 为全部活跃用户数；
+   * 传 userIds（逗号分隔）时只判断这些用户是否活跃，用于对搜索结果标记活跃状态。
+   */
+  const listActiveUsers = async ({ perPage = 20, currentPage = 1, userIds } = {}) => {
+    const adapter = getIdp().getAdapter('Session');
+    if (typeof adapter.findActiveAccounts !== 'function') {
+      throw createError(null, 'adapterSessionQueryMissing');
+    }
+    const { identity } = getIdp();
+    const accountIds = userIds ? String(userIds).split(',').filter(Boolean) : null;
+    const accounts = (await adapter.findActiveAccounts({ accountIds })).sort((a, b) => b.lastLoginTs - a.lastLoginTs);
+    const activeCount = accountIds ? (await adapter.findActiveAccounts()).length : accounts.length;
+    const offset = perPage * (currentPage - 1);
+    const pageData = (
+      await Promise.all(
+        accounts.slice(offset, offset + perPage).map(async ({ accountId, sessionCount, lastLoginTs }) => {
+          const user = await identity.getUser(accountId);
+          if (!user) {
+            return null;
+          }
+          return Object.assign(pick(user, ACTIVE_USER_FIELDS), {
+            id: String(user.id),
+            isSuperAdmin: await identity.isSuperAdmin(user.id),
+            sessionCount,
+            lastLoginAt: lastLoginTs ? new Date(lastLoginTs * 1000) : null
+          });
+        })
+      )
+    ).filter(Boolean);
+    return { pageData, totalCount: accounts.length, activeCount };
   };
 
   const revokeSession = async ({ uid }) => {
@@ -100,5 +136,5 @@ module.exports = fp(async (fastify, options) => {
     return { grants: grants + grantIds.length, sessions };
   };
 
-  services.grant = { revokeGrant, revokeByAccount, listSessions, revokeSession };
+  services.grant = { revokeGrant, revokeByAccount, listSessions, listActiveUsers, revokeSession };
 });

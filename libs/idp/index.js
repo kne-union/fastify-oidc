@@ -114,6 +114,7 @@ module.exports = ({ fastify, options, translator }) => {
       options.adapter ||
       createSequelizeAdapter({
         models: fastify[options.name].models,
+        Op: fastify.sequelize.Sequelize.Op,
         endedStore: options.revocationStore || createMemoryStore(),
         sessionTTL: options.ttl.session
       });

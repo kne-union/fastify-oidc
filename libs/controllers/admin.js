@@ -1,5 +1,5 @@
 const fp = require('fastify-plugin');
-const { str, num, any, list, obj, success, empty, pageResult, client, resourceServer, app, key } = require('../schema/response');
+const { str, num, bool, any, list, obj, success, empty, pageResult, client, resourceServer, app, key } = require('../schema/response');
 
 const idSchema = { type: 'object', required: ['id'], properties: { id: { type: 'string', description: '记录 ID' } } };
 const listQuery = {
@@ -23,6 +23,18 @@ const statusBody = {
   required: ['id', 'status'],
   properties: { id: { type: 'string', description: '记录 ID' }, status: { type: 'string', enum: ['open', 'closed'], description: '目标状态：open 启用，closed 停用' } }
 };
+
+const activeUser = obj('活跃用户', {
+  id: str('用户 ID'),
+  nickname: str('昵称'),
+  avatar: any('头像文件 ID'),
+  email: str('邮箱'),
+  phone: str('手机号'),
+  status: any('用户状态'),
+  isSuperAdmin: bool('是否为平台超级管理员；账号插件不支持判断时不返回'),
+  sessionCount: num('未过期会话数'),
+  lastLoginAt: any('最近登录时间')
+});
 
 module.exports = fp(async (fastify, options) => {
   const { services, translator } = fastify[options.name];
@@ -260,6 +272,33 @@ module.exports = fp(async (fastify, options) => {
       }
     },
     wrap(async request => services.grant.listSessions(request.query))
+  );
+
+  fastify.get(
+    `${admin}/session/active-users`,
+    {
+      onRequest: options.getAuthenticate('session:manage'),
+      schema: {
+        tags: ['OIDC管理后台-会话'],
+        summary: '活跃用户列表',
+        description: '活跃用户 = 有未过期 IdP 登录会话的用户，按最近登录时间倒序分页；totalCount 为符合条件的活跃用户数，activeCount 为全部活跃用户数。传 userIds 时只判断这些用户是否活跃（用于标记搜索结果）',
+        query: {
+          type: 'object',
+          properties: {
+            userIds: { type: 'string', description: '只在这些用户中查询活跃用户，逗号分隔的用户 ID' },
+            perPage: { type: 'number', default: 20, minimum: 1, maximum: 100, description: '每页条数' },
+            currentPage: { type: 'number', default: 1, minimum: 1, description: '页码，从 1 开始' }
+          }
+        },
+        response: success(
+          '活跃用户',
+          Object.assign({}, pageResult('活跃用户', activeUser), {
+            properties: Object.assign({}, pageResult('活跃用户', activeUser).properties, { activeCount: num('全部活跃用户数，不受 userIds 影响') })
+          })
+        )
+      }
+    },
+    wrap(async request => services.grant.listActiveUsers(request.query))
   );
 
   fastify.post(
